@@ -4,7 +4,7 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
-import { Plus, LogOut, Sprout, PackageCheck, Scissors, LayoutDashboard, Settings, ChevronRight } from 'lucide-react';
+import { Plus, LogOut, Sprout, PackageCheck, Scissors, LayoutDashboard, Settings } from 'lucide-react';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
@@ -31,8 +31,6 @@ const AREA_NAMES = Object.keys(WASABI_AREAS);
 
 const PROCESSING_PARTS = ['花', '茎・葉', '茎', '葉', '根茎'];
 
-// 出荷先タグ色
-const DEST_COLORS = ['tag-g', 'tag-b', 'tag-a', 'tag-p', 'tag-gr'];
 
 // ============================================================
 // スタイル
