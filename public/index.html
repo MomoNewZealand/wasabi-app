@@ -1,41 +1,24 @@
 <!DOCTYPE html>
 <html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#2d6a4f">
-    <meta name="description" content="わさび田管理システム - 植え付けから出荷・加工まで一元管理">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="わさび管理">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#2d6a4f" />
+    <meta name="description" content="わさび田管理システム - 植え付けから出荷・加工まで一元管理" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="わさび管理" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/icon-192.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>わさび田管理システム</title>
-
-    <!-- ファビコン -->
-    <link rel="icon" type="image/x-icon" href="%PUBLIC_URL%/favicon.ico">
-    <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/wasabi-icon.svg">
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/icon-192.png">
-
-    <!-- PWA -->
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json">
-
-    <!-- スピナーアニメーション（React読み込み前） -->
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { background: #f0faf4; }
-      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <noscript>このアプリケーションを実行するには JavaScript を有効にしてください。</noscript>
     <div id="root"></div>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/service-worker.js')
-            .then(reg => console.log('SW registered:', reg))
-            .catch(err => console.log('SW failed:', err));
-        });
-      }
-    </script>
-</body>
+  </body>
 </html>
