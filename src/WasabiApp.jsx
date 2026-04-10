@@ -121,7 +121,7 @@ function LoginPage({ setUser }) {
     try {
       if (isSignUp) {
         // サインアップ
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -132,7 +132,7 @@ function LoginPage({ setUser }) {
         setMessage('✅ サインアップ成功！メールを確認してください。');
       } else {
         // ログイン
-        const { data, error } = await supabase.auth.signInWithPassword({
+        const { error } = await supabase.auth.signInWithPassword({
           email,
           password
         });
