@@ -107,6 +107,45 @@ export default function WasamiApp() {
 // ログイン画面
 // ============================================================
 function LoginPage({ setUser }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage('');
+
+    try {
+      if (isSignUp) {
+        // サインアップ
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: window.location.origin
+          }
+        });
+        if (error) throw error;
+        setMessage('✅ サインアップ成功！メールを確認してください。');
+      } else {
+        // ログイン
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password
+        });
+        if (error) throw error;
+        setMessage('✅ ログイン成功！');
+      }
+    } catch (error) {
+      setMessage('❌ エラー: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -123,12 +162,79 @@ function LoginPage({ setUser }) {
           <h1 className="text-3xl font-bold text-green-700">わさび田管理システム</h1>
           <p className="text-gray-600 mt-2">植え付けから出荷・加工まで、すべて管理</p>
         </div>
+
+        {message && (
+          <div className="mb-4 p-3 rounded text-sm text-center"
+            style={{
+              backgroundColor: message.includes('✅') ? '#d1fae5' : '#fee2e2',
+              color: message.includes('✅') ? '#065f46' : '#991b1b'
+            }}>
+            {message}
+          </div>
+        )}
+
+        <form onSubmit={handleEmailAuth} className="space-y-4 mb-6">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              メールアドレス
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              placeholder="example@gmail.com"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              パスワード
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              placeholder="••••••••"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition disabled:opacity-50"
+          >
+            {loading ? '処理中...' : isSignUp ? 'サインアップ' : 'ログイン'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setMessage('');
+            }}
+            className="w-full text-green-600 text-sm hover:underline"
+          >
+            {isSignUp ? 'ログイン画面へ' : 'サインアップ'}
+          </button>
+        </form>
+
+        <div className="relative mb-6">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-300"></div>
+          </div>
+          <div className="relative flex justify-center text-sm">
+            <span className="px-2 bg-white text-gray-500">または</span>
+          </div>
+        </div>
+
         <button
           onClick={handleGoogleLogin}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition"
         >
           🔐 Google でログイン
         </button>
+
         <p className="text-xs text-gray-500 text-center mt-4">
           初回アクセス時は自動的にアカウントが作成されます
         </p>
