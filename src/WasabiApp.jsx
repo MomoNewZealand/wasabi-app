@@ -4,7 +4,7 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
-import { Plus, LogOut, Sprout, PackageCheck, Scissors, LayoutDashboard, ChevronDown, Leaf, TrendingUp, Store, Settings } from 'lucide-react';
+import { Plus, LogOut, Sprout, PackageCheck, Scissors, LayoutDashboard, Store } from 'lucide-react';
 
 // Supabase初期化
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
@@ -183,7 +183,6 @@ function LoginPage() {
   };
 
   const isSuccess = message.startsWith('success:');
-  const isError = message.startsWith('error:');
 
   return (
     <div style={styles.loginBg}>
@@ -240,11 +239,10 @@ function DashboardTab() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const [{ data: shipments }, { data: processing }, { data: plantings }, { data: destinations }] = await Promise.all([
+      const [{ data: shipments }, { data: processing }, { data: plantings }] = await Promise.all([
         supabase.from('shipments').select('shipment_date, quantity, total_amount, destinations(name)'),
         supabase.from('processing').select('*'),
         supabase.from('plantings').select('*'),
-        supabase.from('destinations').select('name, unit_price'),
       ]);
 
       // 月別出荷量
