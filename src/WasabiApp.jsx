@@ -10,6 +10,17 @@ const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// スマホ判定hook
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+}
+
 // ============================================================
 // 場所マスター（大区分 → 詳細場所）
 // ============================================================
@@ -145,6 +156,12 @@ const S = {
   loadingContent: { textAlign: 'center' },
   loadingLeaf: { fontSize: 52, marginBottom: 16 },
   loadingText: { color: '#40916c', fontSize: 14 },
+  // モバイルカード
+  mobileCard: { background: '#fff', borderRadius: 12, border: '1px solid #d8f3dc', padding: '12px 14px', boxShadow: '0 1px 4px rgba(45,106,79,0.06)' },
+  mobileCardField: { display: 'flex', flexDirection: 'column', gap: 2 },
+  mobileCardKey: { fontSize: 11, color: '#74c69d', fontWeight: 600 },
+  mobileCardVal: { fontSize: 13, color: '#1b4332' },
+  mobileCardActions: { display: 'flex', gap: 8, marginTop: 10, borderTop: '1px solid #e8f5e9', paddingTop: 10 },
 };
 
 const statusColors = {
@@ -730,20 +747,102 @@ function PlantingTab() {
 }
 
 function PlantingTable({ plantings, varieties, getVarietyLabel, inlineEditId, inlineEditData, setInlineEditData, onStartEdit, onSaveEdit, onCancelEdit, onDelete, locations, nested = false }) {
+  const isMobile = useIsMobile();
   const thBg = nested ? '#f8fffe' : undefined;
   const thColor = nested ? '#74c69d' : '#d8f3dc';
   const theadBg = nested ? { background: '#f8fffe' } : S.thead;
 
+  // モバイル：カード表示
+  if (isMobile) {
+    return (
+      <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {plantings.map(p => {
+          const isEditing = inlineEditId === p.id;
+          const sc = statusColors[p.status] || statusColors['生育中'];
+          if (isEditing) {
+            return (
+              <div key={p.id} style={{ ...S.mobileCard, background: '#f0faf4', border: '1.5px solid #52b788' }}>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>場所</span>
+                  <input style={{ ...S.input, fontSize: 13, padding: '6px 10px', flex: 1 }}
+                    value={inlineEditData.location} onChange={e => setInlineEditData({ ...inlineEditData, location: e.target.value })} />
+                </div>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>品種</span>
+                  <select style={{ ...S.select, fontSize: 13, padding: '6px 10px', flex: 1 }}
+                    value={inlineEditData.variety_id} onChange={e => setInlineEditData({ ...inlineEditData, variety_id: e.target.value })}>
+                    <option value="">—</option>
+                    {varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                </div>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>植え付け日</span>
+                  <input type="date" style={{ ...S.input, fontSize: 13, padding: '6px 10px', flex: 1 }}
+                    value={inlineEditData.planted_date} onChange={e => setInlineEditData({ ...inlineEditData, planted_date: e.target.value })} />
+                </div>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>本数</span>
+                  <input type="number" style={{ ...S.input, fontSize: 13, padding: '6px 10px', flex: 1 }}
+                    value={inlineEditData.planted_quantity} onChange={e => setInlineEditData({ ...inlineEditData, planted_quantity: e.target.value })} />
+                </div>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>ステータス</span>
+                  <select style={{ ...S.select, fontSize: 13, padding: '6px 10px', flex: 1 }}
+                    value={inlineEditData.status} onChange={e => setInlineEditData({ ...inlineEditData, status: e.target.value })}>
+                    {['生育中', '収穫可能', '収穫済', '廃棄'].map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>備考</span>
+                  <input style={{ ...S.input, fontSize: 13, padding: '6px 10px', flex: 1 }}
+                    value={inlineEditData.notes} onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })} placeholder="備考" />
+                </div>
+                <div style={S.mobileCardActions}>
+                  <button onClick={onSaveEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700, flex: 1, padding: '8px' }}>保存</button>
+                  <button onClick={onCancelEdit} style={{ ...S.cancelBtn, flex: 1, padding: '8px' }}>キャンセル</button>
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={p.id} style={S.mobileCard}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <span style={{ fontWeight: 700, color: '#1b4332', fontSize: 15 }}>{p.location}</span>
+                <span style={{ ...S.statusBadge, backgroundColor: sc.bg, color: sc.text }}>
+                  <span style={{ ...S.statusDot, backgroundColor: sc.dot }} />{p.status}
+                </span>
+              </div>
+              <span style={S.varietyBadge}>{getVarietyLabel(p)}</span>
+              <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>植え付け日</span>
+                  <span style={S.mobileCardVal}>{p.planted_date}</span>
+                </div>
+                <div style={S.mobileCardField}>
+                  <span style={S.mobileCardKey}>本数</span>
+                  <span style={{ ...S.mobileCardVal, color: '#2d6a4f', fontWeight: 700 }}>{p.planted_quantity?.toLocaleString()}本</span>
+                </div>
+              </div>
+              {p.notes && <div style={{ fontSize: 12, color: '#74c69d', marginTop: 6 }}>{p.notes}</div>}
+              <div style={S.mobileCardActions}>
+                <button onClick={() => onStartEdit(p)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
+                <button onClick={() => onDelete(p.id)} style={{ ...S.deleteBtn, flex: 1, padding: '8px' }}>削除</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // PC：テーブル表示
   return (
     <div style={nested ? {} : S.tableWrap}>
       <table style={{ ...S.table, tableLayout: 'fixed' }}>
         <colgroup>
-          <col style={{ width: '18%' }} />
-          <col style={{ width: '16%' }} />
-          <col style={{ width: '13%' }} />
-          <col style={{ width: '10%' }} />
-          <col style={{ width: '13%' }} />
-          <col style={{ width: '18%' }} />
+          <col style={{ width: '18%' }} /><col style={{ width: '16%' }} />
+          <col style={{ width: '13%' }} /><col style={{ width: '10%' }} />
+          <col style={{ width: '13%' }} /><col style={{ width: '18%' }} />
           <col style={{ width: '12%' }} />
         </colgroup>
         <thead>
@@ -757,46 +856,15 @@ function PlantingTable({ plantings, varieties, getVarietyLabel, inlineEditId, in
           {plantings.map((p, i) => {
             const isEditing = inlineEditId === p.id;
             const sc = statusColors[p.status] || statusColors['生育中'];
-
             if (isEditing) {
               return (
                 <tr key={p.id} style={{ backgroundColor: '#f0faf4' }}>
-                  <td style={S.td}>
-                    <input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }}
-                      value={inlineEditData.location}
-                      onChange={e => setInlineEditData({ ...inlineEditData, location: e.target.value })} />
-                  </td>
-                  <td style={S.td}>
-                    <select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }}
-                      value={inlineEditData.variety_id}
-                      onChange={e => setInlineEditData({ ...inlineEditData, variety_id: e.target.value })}>
-                      <option value="">—</option>
-                      {varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </select>
-                  </td>
-                  <td style={S.td}>
-                    <input type="date" style={{ ...S.input, fontSize: 12, padding: '5px 8px' }}
-                      value={inlineEditData.planted_date}
-                      onChange={e => setInlineEditData({ ...inlineEditData, planted_date: e.target.value })} />
-                  </td>
-                  <td style={{ ...S.td, textAlign: 'right' }}>
-                    <input type="number" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }}
-                      value={inlineEditData.planted_quantity}
-                      onChange={e => setInlineEditData({ ...inlineEditData, planted_quantity: e.target.value })} />
-                  </td>
-                  <td style={S.td}>
-                    <select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }}
-                      value={inlineEditData.status}
-                      onChange={e => setInlineEditData({ ...inlineEditData, status: e.target.value })}>
-                      {['生育中', '収穫可能', '収穫済', '廃棄'].map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </td>
-                  <td style={S.td}>
-                    <input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }}
-                      value={inlineEditData.notes}
-                      onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })}
-                      placeholder="備考" />
-                  </td>
+                  <td style={S.td}><input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.location} onChange={e => setInlineEditData({ ...inlineEditData, location: e.target.value })} /></td>
+                  <td style={S.td}><select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.variety_id} onChange={e => setInlineEditData({ ...inlineEditData, variety_id: e.target.value })}><option value="">—</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></td>
+                  <td style={S.td}><input type="date" style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.planted_date} onChange={e => setInlineEditData({ ...inlineEditData, planted_date: e.target.value })} /></td>
+                  <td style={{ ...S.td, textAlign: 'right' }}><input type="number" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }} value={inlineEditData.planted_quantity} onChange={e => setInlineEditData({ ...inlineEditData, planted_quantity: e.target.value })} /></td>
+                  <td style={S.td}><select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.status} onChange={e => setInlineEditData({ ...inlineEditData, status: e.target.value })}>{['生育中', '収穫可能', '収穫済', '廃棄'].map(s => <option key={s}>{s}</option>)}</select></td>
+                  <td style={S.td}><input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.notes} onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })} placeholder="備考" /></td>
                   <td style={{ ...S.td, textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
                       <button onClick={onSaveEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700 }}>保存</button>
@@ -806,18 +874,13 @@ function PlantingTable({ plantings, varieties, getVarietyLabel, inlineEditId, in
                 </tr>
               );
             }
-
             return (
               <tr key={p.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
                 <td style={S.td}><span style={{ fontWeight: 600, color: '#1b4332', fontSize: 13 }}>{p.location}</span></td>
                 <td style={S.td}><span style={S.varietyBadge}>{getVarietyLabel(p)}</span></td>
                 <td style={{ ...S.td, color: '#40916c', fontSize: 12 }}>{p.planted_date}</td>
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#2d6a4f' }}>{p.planted_quantity?.toLocaleString()}本</td>
-                <td style={S.td}>
-                  <span style={{ ...S.statusBadge, backgroundColor: sc.bg, color: sc.text }}>
-                    <span style={{ ...S.statusDot, backgroundColor: sc.dot }} />{p.status}
-                  </span>
-                </td>
+                <td style={S.td}><span style={{ ...S.statusBadge, backgroundColor: sc.bg, color: sc.text }}><span style={{ ...S.statusDot, backgroundColor: sc.dot }} />{p.status}</span></td>
                 <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{p.notes || '—'}</td>
                 <td style={{ ...S.td, textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
@@ -1025,10 +1088,44 @@ function ShipmentTab() {
 }
 
 function ShipmentTable({ shipments, onEdit, nested = false }) {
-  const thStyle = nested
-    ? { ...S.th, color: '#74c69d', background: '#f8fffe' }
-    : S.th;
+  const isMobile = useIsMobile();
+  const thStyle = nested ? { ...S.th, color: '#74c69d', background: '#f8fffe' } : S.th;
   const theadStyle = nested ? { background: '#f8fffe' } : S.thead;
+
+  if (isMobile) {
+    return (
+      <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {shipments.map(s => (
+          <div key={s.id} style={S.mobileCard}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={S.destTag}>{s.destinations?.name}</span>
+              <span style={{ fontSize: 12, color: '#40916c' }}>{s.shipment_date}</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#52b788', marginBottom: 8 }}>{s.plantings?.location}</div>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <div style={S.mobileCardField}>
+                <span style={S.mobileCardKey}>出荷量</span>
+                <span style={{ ...S.mobileCardVal, fontWeight: 700 }}>{parseFloat(s.quantity).toLocaleString()}g</span>
+              </div>
+              <div style={S.mobileCardField}>
+                <span style={S.mobileCardKey}>単価</span>
+                <span style={S.mobileCardVal}>{s.unit_price ? `¥${s.unit_price}/g` : '—'}</span>
+              </div>
+              <div style={S.mobileCardField}>
+                <span style={S.mobileCardKey}>金額</span>
+                <span style={{ ...S.mobileCardVal, color: '#1b4332', fontWeight: 700 }}>
+                  {s.total_amount ? `¥${Math.round(s.total_amount).toLocaleString()}` : '—'}
+                </span>
+              </div>
+            </div>
+            <div style={S.mobileCardActions}>
+              <button onClick={() => onEdit(s)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div style={nested ? {} : S.tableWrap}>
@@ -1070,6 +1167,7 @@ function ShipmentTable({ shipments, onEdit, nested = false }) {
 // 加工記録タブ
 // ============================================================
 function ProcessingTab() {
+  const isMobile = useIsMobile();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -1180,6 +1278,40 @@ function ProcessingTab() {
       </div>
 
       {loading ? <LoadingSpinner /> : records.length === 0 ? <EmptyState text="加工記録がまだありません" /> : (
+        isMobile ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {records.map(r => {
+              const yr = parseFloat(r.yield_rate || 0);
+              const yc = getYieldColor(yr);
+              return (
+                <div key={r.id} style={S.mobileCard}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={S.partBadge}>{r.part}</span>
+                    <span style={{ fontSize: 12, color: '#40916c' }}>{r.processing_date}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, marginBottom: 6 }}>
+                    <div style={S.mobileCardField}>
+                      <span style={S.mobileCardKey}>加工前</span>
+                      <span style={S.mobileCardVal}>{parseFloat(r.weight_before).toLocaleString()}g</span>
+                    </div>
+                    <div style={S.mobileCardField}>
+                      <span style={S.mobileCardKey}>加工後</span>
+                      <span style={S.mobileCardVal}>{parseFloat(r.weight_after).toLocaleString()}g</span>
+                    </div>
+                    <div style={S.mobileCardField}>
+                      <span style={S.mobileCardKey}>歩留まり</span>
+                      <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  {r.notes && <div style={{ fontSize: 12, color: '#74c69d', marginBottom: 6 }}>{r.notes}</div>}
+                  <div style={S.mobileCardActions}>
+                    <button onClick={() => handleEdit(r)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
         <div style={S.tableWrap}>
           <table style={S.table}>
             <thead>
@@ -1216,6 +1348,7 @@ function ProcessingTab() {
             </tbody>
           </table>
         </div>
+        )
       )}
     </div>
   );
