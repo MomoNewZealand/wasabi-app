@@ -21,6 +21,23 @@ function useIsMobile() {
   return isMobile;
 }
 
+// CSVエクスポートユーティリティ
+function exportCSV(rows, filename) {
+  if (!rows.length) { alert('エクスポートするデータがありません'); return; }
+  const headers = Object.keys(rows[0]);
+  const escape = v => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = '\uFEFF' + [headers.join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ============================================================
 // 場所マスター（大区分 → 詳細場所）
 // ============================================================
@@ -162,6 +179,7 @@ const S = {
   mobileCardKey: { fontSize: 11, color: '#74c69d', fontWeight: 600 },
   mobileCardVal: { fontSize: 13, color: '#1b4332' },
   mobileCardActions: { display: 'flex', gap: 8, marginTop: 10, borderTop: '1px solid #e8f5e9', paddingTop: 10 },
+  csvBtn: { background: '#fff', border: '1.5px solid #b7e4c7', color: '#2d6a4f', borderRadius: 20, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
 };
 
 const statusColors = {
@@ -689,6 +707,17 @@ function PlantingTab() {
       <div style={S.listHeader}>
         <h3 style={S.sectionTitle}>記録一覧 <span style={S.countBadge}>{filtered.length}件</span></h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button onClick={() => {
+            const rows = filtered.map(p => ({
+              場所: p.location,
+              品種: getVarietyLabel(p),
+              植え付け日: p.planted_date,
+              植え付け本数: p.planted_quantity,
+              ステータス: p.status,
+              備考: p.notes || '',
+            }));
+            exportCSV(rows, `植え付け記録_${new Date().toISOString().slice(0,10)}.csv`);
+          }} style={S.csvBtn}>⬇ CSV出力</button>
           <div style={S.viewBtns}>
             {[['area', 'わさび田ごと'], ['date', '日付順']].map(([v, l]) => (
               <button key={v} onClick={() => setView(v)}
@@ -1044,6 +1073,18 @@ function ShipmentTab() {
         <h3 style={S.sectionTitle}>出荷記録一覧 <span style={S.countBadge}>{shipments.length}件</span></h3>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={S.revenueSummary}>総売上: <strong style={{ color: '#2d6a4f' }}>¥{Math.round(totalRevenue).toLocaleString()}</strong></span>
+          <button onClick={() => {
+            const rows = shipments.map(s => ({
+              出荷日: s.shipment_date,
+              出荷先: s.destinations?.name || '',
+              植え付けロット: s.plantings?.location || '',
+              出荷量_g: s.quantity,
+              単価_円g: s.unit_price || '',
+              合計金額_円: s.total_amount ? Math.round(s.total_amount) : '',
+              備考: s.notes || '',
+            }));
+            exportCSV(rows, `出荷記録_${new Date().toISOString().slice(0,10)}.csv`);
+          }} style={S.csvBtn}>⬇ CSV出力</button>
           <div style={S.viewBtns}>
             {[['date', '日付順'], ['dest', '出荷先ごと']].map(([v, l]) => (
               <button key={v} onClick={() => setView(v)}
@@ -1275,6 +1316,17 @@ function ProcessingTab() {
 
       <div style={S.listHeader}>
         <h3 style={S.sectionTitle}>加工記録一覧 <span style={S.countBadge}>{records.length}件</span></h3>
+        <button onClick={() => {
+          const rows = records.map(r => ({
+            加工日: r.processing_date,
+            部位: r.part,
+            加工前重量_g: r.weight_before,
+            加工後重量_g: r.weight_after,
+            歩留まり率_percent: r.yield_rate,
+            備考: r.notes || '',
+          }));
+          exportCSV(rows, `加工記録_${new Date().toISOString().slice(0,10)}.csv`);
+        }} style={S.csvBtn}>⬇ CSV出力</button>
       </div>
 
       {loading ? <LoadingSpinner /> : records.length === 0 ? <EmptyState text="加工記録がまだありません" /> : (
