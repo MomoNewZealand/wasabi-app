@@ -937,7 +937,8 @@ function ShipmentTab() {
   const [view, setView] = useState('date');
   const [openDests, setOpenDests] = useState({});
   const [showForm, setShowForm] = useState(false);
-  const [editRecord, setEditRecord] = useState(null);
+  const [inlineEditId, setInlineEditId] = useState(null);
+  const [inlineEditData, setInlineEditData] = useState({});
 
   const emptyForm = { planting_id: '', destination_id: '', shipment_date: '', quantity: '', unit_price: '', notes: '' };
   const [formData, setFormData] = useState(emptyForm);
@@ -964,27 +965,37 @@ function ShipmentTab() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const total = formData.quantity && formData.unit_price ? parseFloat(formData.quantity) * parseFloat(formData.unit_price) : null;
-    const payload = { ...formData, total_amount: total };
-    if (editRecord) {
-      const { error } = await supabase.from('shipments').update(payload).eq('id', editRecord.id);
-      if (error) { alert('❌ ' + error.message); return; }
-    } else {
-      const { error } = await supabase.from('shipments').insert([payload]);
-      if (error) { alert('❌ ' + error.message); return; }
-    }
-    setFormData(emptyForm); setEditRecord(null); setShowForm(false); fetchData();
+    const payload = { ...formData, planting_id: formData.planting_id || null, total_amount: total };
+    const { error } = await supabase.from('shipments').insert([payload]);
+    if (error) { alert('❌ ' + error.message); return; }
+    setFormData(emptyForm); setShowForm(false); fetchData();
   };
 
-  const handleEdit = (s) => {
-    setFormData({
-      planting_id: s.planting_id,
+  const startInlineEdit = (s) => {
+    setInlineEditId(s.id);
+    setInlineEditData({
+      planting_id: s.planting_id || '',
       destination_id: s.destination_id,
       shipment_date: s.shipment_date,
       quantity: String(s.quantity),
       unit_price: s.unit_price ? String(s.unit_price) : '',
       notes: s.notes || '',
     });
-    setEditRecord(s); setShowForm(true);
+  };
+
+  const saveInlineEdit = async () => {
+    const total = inlineEditData.quantity && inlineEditData.unit_price
+      ? parseFloat(inlineEditData.quantity) * parseFloat(inlineEditData.unit_price) : null;
+    const payload = { ...inlineEditData, planting_id: inlineEditData.planting_id || null, total_amount: total };
+    const { error } = await supabase.from('shipments').update(payload).eq('id', inlineEditId);
+    if (error) { alert('❌ ' + error.message); return; }
+    setInlineEditId(null); fetchData();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('この記録を削除しますか？')) return;
+    await supabase.from('shipments').delete().eq('id', id);
+    fetchData();
   };
 
   const totalRevenue = shipments.reduce((a, s) => a + parseFloat(s.total_amount || 0), 0);
@@ -1003,19 +1014,19 @@ function ShipmentTab() {
     <div style={S.tabContent}>
       <PageHeader title="出荷記録" subtitle="出荷先・数量・金額の管理" icon="📦" />
 
-      <button onClick={() => { setShowForm(!showForm); setEditRecord(null); setFormData(emptyForm); }} style={S.submitBtn}>
+      <button onClick={() => { setShowForm(!showForm); setFormData(emptyForm); }} style={S.submitBtn}>
         <Plus size={18} /> 新しい出荷を記録
       </button>
 
       {showForm && (
-        <FormCard title={editRecord ? '出荷記録を編集' : '新しい出荷を記録'}>
+        <FormCard title="新しい出荷を記録">
           <form onSubmit={handleSubmit}>
             <div style={S.formGrid}>
               <div>
-                <label style={S.fieldLabel}>植え付けロット</label>
+                <label style={S.fieldLabel}>植え付けロット <span style={{ color: '#74c69d', fontWeight: 400 }}>（任意）</span></label>
                 <select style={S.select} value={formData.planting_id}
-                  onChange={e => setFormData({ ...formData, planting_id: e.target.value })} required>
-                  <option value="">ロットを選択</option>
+                  onChange={e => setFormData({ ...formData, planting_id: e.target.value })}>
+                  <option value="">未設定</option>
                   {plantings.map(p => <option key={p.id} value={p.id}>{p.location}（{p.variety || '品種不明'}）</option>)}
                 </select>
               </div>
@@ -1061,9 +1072,9 @@ function ShipmentTab() {
             </div>
             <div style={{ display: 'flex', gap: 8, margin: '0 24px 20px' }}>
               <button type="submit" style={{ ...S.submitBtn, margin: 0, flex: 1 }}>
-                <Plus size={18} /> {editRecord ? '更新する' : '記録を追加'}
+                <Plus size={18} /> 記録を追加
               </button>
-              <button type="button" onClick={() => { setShowForm(false); setEditRecord(null); setFormData(emptyForm); }} style={S.cancelBtn}>キャンセル</button>
+              <button type="button" onClick={() => { setShowForm(false); setFormData(emptyForm); }} style={S.cancelBtn}>キャンセル</button>
             </div>
           </form>
         </FormCard>
@@ -1096,7 +1107,10 @@ function ShipmentTab() {
 
       {loading ? <LoadingSpinner /> : shipments.length === 0 ? <EmptyState text="出荷記録がまだありません" /> : (
         view === 'date' ? (
-          <ShipmentTable shipments={shipments} onEdit={handleEdit} />
+          <ShipmentTable shipments={shipments} plantings={plantings} destinations={destinations}
+            inlineEditId={inlineEditId} inlineEditData={inlineEditData} setInlineEditData={setInlineEditData}
+            onStartEdit={startInlineEdit} onSaveEdit={saveInlineEdit} onCancelEdit={() => setInlineEditId(null)}
+            onDelete={handleDelete} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {Object.entries(grouped).map(([destName, rows]) => {
@@ -1105,8 +1119,7 @@ function ShipmentTab() {
               const totalAmt = rows.reduce((a, s) => a + parseFloat(s.total_amount || 0), 0);
               return (
                 <div key={destName} style={S.tableWrap}>
-                  <div style={S.groupHeader}
-                    onClick={() => setOpenDests(prev => ({ ...prev, [destName]: !isOpen }))}>
+                  <div style={S.groupHeader} onClick={() => setOpenDests(prev => ({ ...prev, [destName]: !isOpen }))}>
                     <div style={S.groupLeft}>
                       <span style={{ ...S.chevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
                       <span style={S.destTag}>{destName}</span>
@@ -1117,7 +1130,10 @@ function ShipmentTab() {
                       {totalAmt > 0 && <span style={{ fontWeight: 700, color: '#1b4332' }}>¥{Math.round(totalAmt).toLocaleString()}</span>}
                     </div>
                   </div>
-                  {isOpen && <ShipmentTable shipments={rows} onEdit={handleEdit} nested />}
+                  {isOpen && <ShipmentTable shipments={rows} plantings={plantings} destinations={destinations}
+                    inlineEditId={inlineEditId} inlineEditData={inlineEditData} setInlineEditData={setInlineEditData}
+                    onStartEdit={startInlineEdit} onSaveEdit={saveInlineEdit} onCancelEdit={() => setInlineEditId(null)}
+                    onDelete={handleDelete} nested />}
                 </div>
               );
             })}
@@ -1128,7 +1144,7 @@ function ShipmentTab() {
   );
 }
 
-function ShipmentTable({ shipments, onEdit, nested = false }) {
+function ShipmentTable({ shipments, plantings, destinations, inlineEditId, inlineEditData, setInlineEditData, onStartEdit, onSaveEdit, onCancelEdit, onDelete, nested = false }) {
   const isMobile = useIsMobile();
   const thStyle = nested ? { ...S.th, color: '#74c69d', background: '#f8fffe' } : S.th;
   const theadStyle = nested ? { background: '#f8fffe' } : S.thead;
@@ -1136,34 +1152,59 @@ function ShipmentTable({ shipments, onEdit, nested = false }) {
   if (isMobile) {
     return (
       <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {shipments.map(s => (
-          <div key={s.id} style={S.mobileCard}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <span style={S.destTag}>{s.destinations?.name}</span>
-              <span style={{ fontSize: 12, color: '#40916c' }}>{s.shipment_date}</span>
-            </div>
-            <div style={{ fontSize: 12, color: '#52b788', marginBottom: 8 }}>{s.plantings?.location}</div>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <div style={S.mobileCardField}>
-                <span style={S.mobileCardKey}>出荷量</span>
-                <span style={{ ...S.mobileCardVal, fontWeight: 700 }}>{parseFloat(s.quantity).toLocaleString()}g</span>
+        {shipments.map(s => {
+          const isEditing = inlineEditId === s.id;
+          if (isEditing) {
+            const previewTotal = inlineEditData.quantity && inlineEditData.unit_price
+              ? Math.round(parseFloat(inlineEditData.quantity) * parseFloat(inlineEditData.unit_price)).toLocaleString() : null;
+            return (
+              <div key={s.id} style={{ ...S.mobileCard, background: '#f0faf4', border: '1.5px solid #52b788' }}>
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>出荷先</span>
+                  <select style={{ ...S.select, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.destination_id} onChange={e => setInlineEditData({ ...inlineEditData, destination_id: e.target.value })}>
+                    {destinations.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select></div>
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>植え付けロット（任意）</span>
+                  <select style={{ ...S.select, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.planting_id} onChange={e => setInlineEditData({ ...inlineEditData, planting_id: e.target.value })}>
+                    <option value="">未設定</option>
+                    {plantings.map(p => <option key={p.id} value={p.id}>{p.location}</option>)}
+                  </select></div>
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>出荷日</span>
+                  <input type="date" style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.shipment_date} onChange={e => setInlineEditData({ ...inlineEditData, shipment_date: e.target.value })} /></div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ ...S.mobileCardField, flex: 1 }}><span style={S.mobileCardKey}>出荷量 (g)</span>
+                    <input type="number" step="0.1" style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.quantity} onChange={e => setInlineEditData({ ...inlineEditData, quantity: e.target.value })} /></div>
+                  <div style={{ ...S.mobileCardField, flex: 1 }}><span style={S.mobileCardKey}>単価 (円/g)</span>
+                    <input type="number" step="0.01" style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.unit_price} onChange={e => setInlineEditData({ ...inlineEditData, unit_price: e.target.value })} /></div>
+                </div>
+                {previewTotal && <div style={{ fontSize: 13, color: '#1b4332', fontWeight: 700, marginTop: 4 }}>合計: ¥{previewTotal}</div>}
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>備考</span>
+                  <input style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.notes} onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })} /></div>
+                <div style={S.mobileCardActions}>
+                  <button onClick={onSaveEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700, flex: 1, padding: '8px' }}>保存</button>
+                  <button onClick={onCancelEdit} style={{ ...S.cancelBtn, flex: 1, padding: '8px' }}>キャンセル</button>
+                </div>
               </div>
-              <div style={S.mobileCardField}>
-                <span style={S.mobileCardKey}>単価</span>
-                <span style={S.mobileCardVal}>{s.unit_price ? `¥${s.unit_price}/g` : '—'}</span>
+            );
+          }
+          return (
+            <div key={s.id} style={S.mobileCard}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={S.destTag}>{s.destinations?.name}</span>
+                <span style={{ fontSize: 12, color: '#40916c' }}>{s.shipment_date}</span>
               </div>
-              <div style={S.mobileCardField}>
-                <span style={S.mobileCardKey}>金額</span>
-                <span style={{ ...S.mobileCardVal, color: '#1b4332', fontWeight: 700 }}>
-                  {s.total_amount ? `¥${Math.round(s.total_amount).toLocaleString()}` : '—'}
-                </span>
+              {s.plantings?.location && <div style={{ fontSize: 12, color: '#52b788', marginBottom: 8 }}>{s.plantings.location}</div>}
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>出荷量</span><span style={{ ...S.mobileCardVal, fontWeight: 700 }}>{parseFloat(s.quantity).toLocaleString()}g</span></div>
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>単価</span><span style={S.mobileCardVal}>{s.unit_price ? `¥${s.unit_price}/g` : '—'}</span></div>
+                <div style={S.mobileCardField}><span style={S.mobileCardKey}>金額</span><span style={{ ...S.mobileCardVal, color: '#1b4332', fontWeight: 700 }}>{s.total_amount ? `¥${Math.round(s.total_amount).toLocaleString()}` : '—'}</span></div>
+              </div>
+              <div style={S.mobileCardActions}>
+                <button onClick={() => onStartEdit(s)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
+                <button onClick={() => onDelete(s.id)} style={{ ...S.deleteBtn, flex: 1, padding: '8px' }}>削除</button>
               </div>
             </div>
-            <div style={S.mobileCardActions}>
-              <button onClick={() => onEdit(s)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
@@ -1183,21 +1224,45 @@ function ShipmentTable({ shipments, onEdit, nested = false }) {
           </tr>
         </thead>
         <tbody>
-          {shipments.map((s, i) => (
-            <tr key={s.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
-              <td style={{ ...S.td, color: '#40916c' }}>{s.shipment_date}</td>
-              {!nested && <td style={S.td}><span style={S.destTag}>{s.destinations?.name}</span></td>}
-              <td style={{ ...S.td, fontSize: 12, color: '#52b788' }}>{s.plantings?.location}</td>
-              <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{parseFloat(s.quantity).toLocaleString()}g</td>
-              <td style={{ ...S.td, textAlign: 'right', color: '#74c69d' }}>{s.unit_price ? `¥${s.unit_price}/g` : '—'}</td>
-              <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#1b4332' }}>
-                {s.total_amount ? `¥${Math.round(s.total_amount).toLocaleString()}` : '—'}
-              </td>
-              <td style={{ ...S.td, textAlign: 'center' }}>
-                <button onClick={() => onEdit(s)} style={S.editBtn}>編集</button>
-              </td>
-            </tr>
-          ))}
+          {shipments.map((s, i) => {
+            const isEditing = inlineEditId === s.id;
+            if (isEditing) {
+              const previewTotal = inlineEditData.quantity && inlineEditData.unit_price
+                ? Math.round(parseFloat(inlineEditData.quantity) * parseFloat(inlineEditData.unit_price)).toLocaleString() : '—';
+              return (
+                <tr key={s.id} style={{ backgroundColor: '#f0faf4' }}>
+                  <td style={S.td}><input type="date" style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.shipment_date} onChange={e => setInlineEditData({ ...inlineEditData, shipment_date: e.target.value })} /></td>
+                  {!nested && <td style={S.td}><select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.destination_id} onChange={e => setInlineEditData({ ...inlineEditData, destination_id: e.target.value })}>{destinations.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></td>}
+                  <td style={S.td}><select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.planting_id} onChange={e => setInlineEditData({ ...inlineEditData, planting_id: e.target.value })}><option value="">未設定</option>{plantings.map(p => <option key={p.id} value={p.id}>{p.location}</option>)}</select></td>
+                  <td style={{ ...S.td, textAlign: 'right' }}><input type="number" step="0.1" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }} value={inlineEditData.quantity} onChange={e => setInlineEditData({ ...inlineEditData, quantity: e.target.value })} /></td>
+                  <td style={{ ...S.td, textAlign: 'right' }}><input type="number" step="0.01" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }} value={inlineEditData.unit_price} onChange={e => setInlineEditData({ ...inlineEditData, unit_price: e.target.value })} /></td>
+                  <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#1b4332' }}>¥{previewTotal}</td>
+                  <td style={{ ...S.td, textAlign: 'center' }}>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                      <button onClick={onSaveEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700 }}>保存</button>
+                      <button onClick={onCancelEdit} style={S.cancelBtn}>✕</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            }
+            return (
+              <tr key={s.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
+                <td style={{ ...S.td, color: '#40916c' }}>{s.shipment_date}</td>
+                {!nested && <td style={S.td}><span style={S.destTag}>{s.destinations?.name}</span></td>}
+                <td style={{ ...S.td, fontSize: 12, color: '#52b788' }}>{s.plantings?.location || '—'}</td>
+                <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{parseFloat(s.quantity).toLocaleString()}g</td>
+                <td style={{ ...S.td, textAlign: 'right', color: '#74c69d' }}>{s.unit_price ? `¥${s.unit_price}/g` : '—'}</td>
+                <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#1b4332' }}>{s.total_amount ? `¥${Math.round(s.total_amount).toLocaleString()}` : '—'}</td>
+                <td style={{ ...S.td, textAlign: 'center' }}>
+                  <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                    <button onClick={() => onStartEdit(s)} style={S.editBtn}>編集</button>
+                    <button onClick={() => onDelete(s.id)} style={S.deleteBtn}>削除</button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -1212,8 +1277,9 @@ function ProcessingTab() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editRecord, setEditRecord] = useState(null);
   const [customPart, setCustomPart] = useState(false);
+  const [inlineEditId, setInlineEditId] = useState(null);
+  const [inlineEditData, setInlineEditData] = useState({});
 
   const emptyForm = { processing_date: '', part: '', weight_before: '', weight_after: '', notes: '' };
   const [formData, setFormData] = useState(emptyForm);
@@ -1229,20 +1295,27 @@ function ProcessingTab() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const yield_rate = ((parseFloat(formData.weight_after) / parseFloat(formData.weight_before)) * 100).toFixed(2);
-    const payload = { ...formData, yield_rate };
-    if (editRecord) {
-      const { error } = await supabase.from('processing').update(payload).eq('id', editRecord.id);
-      if (error) { alert('❌ ' + error.message); return; }
-    } else {
-      const { error } = await supabase.from('processing').insert([payload]);
-      if (error) { alert('❌ ' + error.message); return; }
-    }
-    setFormData(emptyForm); setEditRecord(null); setShowForm(false); setCustomPart(false); fetchProcessing();
+    const { error } = await supabase.from('processing').insert([{ ...formData, yield_rate }]);
+    if (error) { alert('❌ ' + error.message); return; }
+    setFormData(emptyForm); setShowForm(false); setCustomPart(false); fetchProcessing();
   };
 
-  const handleEdit = (r) => {
-    setFormData({ processing_date: r.processing_date, part: r.part, weight_before: String(r.weight_before), weight_after: String(r.weight_after), notes: r.notes || '' });
-    setEditRecord(r); setShowForm(true);
+  const startInlineEdit = (r) => {
+    setInlineEditId(r.id);
+    setInlineEditData({ processing_date: r.processing_date, part: r.part, weight_before: String(r.weight_before), weight_after: String(r.weight_after), notes: r.notes || '' });
+  };
+
+  const saveInlineEdit = async () => {
+    const yield_rate = ((parseFloat(inlineEditData.weight_after) / parseFloat(inlineEditData.weight_before)) * 100).toFixed(2);
+    const { error } = await supabase.from('processing').update({ ...inlineEditData, yield_rate }).eq('id', inlineEditId);
+    if (error) { alert('❌ ' + error.message); return; }
+    setInlineEditId(null); fetchProcessing();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('この記録を削除しますか？')) return;
+    await supabase.from('processing').delete().eq('id', id);
+    fetchProcessing();
   };
 
   const yieldPreview = formData.weight_before && formData.weight_after
@@ -1254,12 +1327,12 @@ function ProcessingTab() {
     <div style={S.tabContent}>
       <PageHeader title="加工記録" subtitle="部位別の重量と歩留まり率" icon="🔪" />
 
-      <button onClick={() => { setShowForm(!showForm); setEditRecord(null); setFormData(emptyForm); }} style={S.submitBtn}>
+      <button onClick={() => { setShowForm(!showForm); setFormData(emptyForm); }} style={S.submitBtn}>
         <Plus size={18} /> 新しい加工を記録
       </button>
 
       {showForm && (
-        <FormCard title={editRecord ? '加工記録を編集' : '新しい加工を記録'}>
+        <FormCard title="新しい加工を記録">
           <form onSubmit={handleSubmit}>
             <div style={S.formGrid}>
               <div>
@@ -1306,9 +1379,9 @@ function ProcessingTab() {
             </div>
             <div style={{ display: 'flex', gap: 8, margin: '0 24px 20px' }}>
               <button type="submit" style={{ ...S.submitBtn, margin: 0, flex: 1 }}>
-                <Plus size={18} /> {editRecord ? '更新する' : '記録を追加'}
+                <Plus size={18} /> 記録を追加
               </button>
-              <button type="button" onClick={() => { setShowForm(false); setEditRecord(null); setFormData(emptyForm); }} style={S.cancelBtn}>キャンセル</button>
+              <button type="button" onClick={() => { setShowForm(false); setFormData(emptyForm); }} style={S.cancelBtn}>キャンセル</button>
             </div>
           </form>
         </FormCard>
@@ -1333,8 +1406,36 @@ function ProcessingTab() {
         isMobile ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {records.map(r => {
+              const isEditing = inlineEditId === r.id;
               const yr = parseFloat(r.yield_rate || 0);
               const yc = getYieldColor(yr);
+              if (isEditing) {
+                const editYield = inlineEditData.weight_before && inlineEditData.weight_after
+                  ? ((parseFloat(inlineEditData.weight_after) / parseFloat(inlineEditData.weight_before)) * 100).toFixed(1) : null;
+                return (
+                  <div key={r.id} style={{ ...S.mobileCard, background: '#f0faf4', border: '1.5px solid #52b788' }}>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>加工日</span>
+                      <input type="date" style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.processing_date} onChange={e => setInlineEditData({ ...inlineEditData, processing_date: e.target.value })} /></div>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>部位</span>
+                      <select style={{ ...S.select, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.part} onChange={e => setInlineEditData({ ...inlineEditData, part: e.target.value })}>
+                        {PROCESSING_PARTS.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select></div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ ...S.mobileCardField, flex: 1 }}><span style={S.mobileCardKey}>加工前 (g)</span>
+                        <input type="number" step="0.1" style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.weight_before} onChange={e => setInlineEditData({ ...inlineEditData, weight_before: e.target.value })} /></div>
+                      <div style={{ ...S.mobileCardField, flex: 1 }}><span style={S.mobileCardKey}>加工後 (g)</span>
+                        <input type="number" step="0.1" style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.weight_after} onChange={e => setInlineEditData({ ...inlineEditData, weight_after: e.target.value })} /></div>
+                    </div>
+                    {editYield && <div style={{ fontSize: 13, color: getYieldColor(parseFloat(editYield)), fontWeight: 700, marginTop: 4 }}>歩留まり: {editYield}%</div>}
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>備考</span>
+                      <input style={{ ...S.input, fontSize: 13, padding: '6px 10px' }} value={inlineEditData.notes} onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })} /></div>
+                    <div style={S.mobileCardActions}>
+                      <button onClick={saveInlineEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700, flex: 1, padding: '8px' }}>保存</button>
+                      <button onClick={() => setInlineEditId(null)} style={{ ...S.cancelBtn, flex: 1, padding: '8px' }}>キャンセル</button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={r.id} style={S.mobileCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -1342,64 +1443,82 @@ function ProcessingTab() {
                     <span style={{ fontSize: 12, color: '#40916c' }}>{r.processing_date}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 12, marginBottom: 6 }}>
-                    <div style={S.mobileCardField}>
-                      <span style={S.mobileCardKey}>加工前</span>
-                      <span style={S.mobileCardVal}>{parseFloat(r.weight_before).toLocaleString()}g</span>
-                    </div>
-                    <div style={S.mobileCardField}>
-                      <span style={S.mobileCardKey}>加工後</span>
-                      <span style={S.mobileCardVal}>{parseFloat(r.weight_after).toLocaleString()}g</span>
-                    </div>
-                    <div style={S.mobileCardField}>
-                      <span style={S.mobileCardKey}>歩留まり</span>
-                      <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span>
-                    </div>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>加工前</span><span style={S.mobileCardVal}>{parseFloat(r.weight_before).toLocaleString()}g</span></div>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>加工後</span><span style={S.mobileCardVal}>{parseFloat(r.weight_after).toLocaleString()}g</span></div>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>歩留まり</span><span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span></div>
                   </div>
                   {r.notes && <div style={{ fontSize: 12, color: '#74c69d', marginBottom: 6 }}>{r.notes}</div>}
                   <div style={S.mobileCardActions}>
-                    <button onClick={() => handleEdit(r)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
+                    <button onClick={() => startInlineEdit(r)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
+                    <button onClick={() => handleDelete(r.id)} style={{ ...S.deleteBtn, flex: 1, padding: '8px' }}>削除</button>
                   </div>
                 </div>
               );
             })}
           </div>
         ) : (
-        <div style={S.tableWrap}>
-          <table style={S.table}>
-            <thead>
-              <tr style={S.thead}>
-                <th style={S.th}>加工日</th>
-                <th style={S.th}>部位</th>
-                <th style={{ ...S.th, textAlign: 'right' }}>加工前 (g)</th>
-                <th style={{ ...S.th, textAlign: 'right' }}>加工後 (g)</th>
-                <th style={{ ...S.th, textAlign: 'right' }}>歩留まり</th>
-                <th style={S.th}>備考</th>
-                <th style={{ ...S.th, textAlign: 'center' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {records.map((r, i) => {
-                const yr = parseFloat(r.yield_rate || 0);
-                const yc = getYieldColor(yr);
-                return (
-                  <tr key={r.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
-                    <td style={{ ...S.td, color: '#40916c' }}>{r.processing_date}</td>
-                    <td style={S.td}><span style={S.partBadge}>{r.part}</span></td>
-                    <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_before).toLocaleString()}g</td>
-                    <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_after).toLocaleString()}g</td>
-                    <td style={{ ...S.td, textAlign: 'right' }}>
-                      <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span>
-                    </td>
-                    <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{r.notes || '—'}</td>
-                    <td style={{ ...S.td, textAlign: 'center' }}>
-                      <button onClick={() => handleEdit(r)} style={S.editBtn}>編集</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+          <div style={S.tableWrap}>
+            <table style={S.table}>
+              <thead>
+                <tr style={S.thead}>
+                  <th style={S.th}>加工日</th>
+                  <th style={S.th}>部位</th>
+                  <th style={{ ...S.th, textAlign: 'right' }}>加工前 (g)</th>
+                  <th style={{ ...S.th, textAlign: 'right' }}>加工後 (g)</th>
+                  <th style={{ ...S.th, textAlign: 'right' }}>歩留まり</th>
+                  <th style={S.th}>備考</th>
+                  <th style={{ ...S.th, textAlign: 'center' }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.map((r, i) => {
+                  const isEditing = inlineEditId === r.id;
+                  const yr = parseFloat(r.yield_rate || 0);
+                  const yc = getYieldColor(yr);
+                  const editYield = isEditing && inlineEditData.weight_before && inlineEditData.weight_after
+                    ? ((parseFloat(inlineEditData.weight_after) / parseFloat(inlineEditData.weight_before)) * 100).toFixed(1) : null;
+                  if (isEditing) {
+                    return (
+                      <tr key={r.id} style={{ backgroundColor: '#f0faf4' }}>
+                        <td style={S.td}><input type="date" style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.processing_date} onChange={e => setInlineEditData({ ...inlineEditData, processing_date: e.target.value })} /></td>
+                        <td style={S.td}><select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.part} onChange={e => setInlineEditData({ ...inlineEditData, part: e.target.value })}>{PROCESSING_PARTS.map(p => <option key={p} value={p}>{p}</option>)}</select></td>
+                        <td style={{ ...S.td, textAlign: 'right' }}><input type="number" step="0.1" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }} value={inlineEditData.weight_before} onChange={e => setInlineEditData({ ...inlineEditData, weight_before: e.target.value })} /></td>
+                        <td style={{ ...S.td, textAlign: 'right' }}><input type="number" step="0.1" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }} value={inlineEditData.weight_after} onChange={e => setInlineEditData({ ...inlineEditData, weight_after: e.target.value })} /></td>
+                        <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: editYield ? getYieldColor(parseFloat(editYield)) : '#74c69d' }}>
+                          {editYield ? `${editYield}%` : '—'}
+                        </td>
+                        <td style={S.td}><input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.notes} onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })} placeholder="備考" /></td>
+                        <td style={{ ...S.td, textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                            <button onClick={saveInlineEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700 }}>保存</button>
+                            <button onClick={() => setInlineEditId(null)} style={S.cancelBtn}>✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={r.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
+                      <td style={{ ...S.td, color: '#40916c' }}>{r.processing_date}</td>
+                      <td style={S.td}><span style={S.partBadge}>{r.part}</span></td>
+                      <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_before).toLocaleString()}g</td>
+                      <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_after).toLocaleString()}g</td>
+                      <td style={{ ...S.td, textAlign: 'right' }}>
+                        <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span>
+                      </td>
+                      <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{r.notes || '—'}</td>
+                      <td style={{ ...S.td, textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                          <button onClick={() => startInlineEdit(r)} style={S.editBtn}>編集</button>
+                          <button onClick={() => handleDelete(r.id)} style={S.deleteBtn}>削除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )
       )}
     </div>
