@@ -446,37 +446,50 @@ function DashboardTab() {
 // ============================================================
 function PlantingTab() {
   const [varieties, setVarieties] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [plantings, setPlantings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState('area'); // 'date' | 'area'
+  const [view, setView] = useState('area');
   const [filterStatus, setFilterStatus] = useState('すべて');
   const [openAreas, setOpenAreas] = useState({});
-  const [editRecord, setEditRecord] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [inlineEditId, setInlineEditId] = useState(null);
+  const [inlineEditData, setInlineEditData] = useState({});
 
   const emptyForm = { area: '', location: '', planted_date: '', planted_quantity: '', variety_id: '', variety_generation: '', status: '生育中', notes: '' };
   const [formData, setFormData] = useState(emptyForm);
-  const [customLocation, setCustomLocation] = useState(false);
+  const [newLocationName, setNewLocationName] = useState('');
 
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
-    const [{ data: pd }, { data: vd }] = await Promise.all([
+    const [{ data: pd }, { data: vd }, { data: ld }] = await Promise.all([
       supabase.from('plantings').select('*').order('planted_date', { ascending: false }),
       supabase.from('varieties').select('*').order('name'),
+      supabase.from('locations').select('*').order('area').order('name'),
     ]);
     setPlantings(pd || []);
     setVarieties(vd || []);
+    setLocations(ld || []);
     const init = {};
     AREA_NAMES.forEach(a => { init[a] = true; });
+    init['その他'] = true;
     setOpenAreas(init);
     setLoading(false);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const loc = formData.location === '__new__' ? newLocationName : formData.location;
+    if (!loc) { alert('場所を入力してください'); return; }
+
+    // 新しい場所ならlocationsテーブルにも追加
+    if (formData.location === '__new__' && newLocationName && formData.area) {
+      await supabase.from('locations').insert([{ area: formData.area, name: newLocationName }]).select();
+    }
+
     const payload = {
-      location: formData.location,
+      location: loc,
       planted_date: formData.planted_date,
       planted_quantity: parseInt(formData.planted_quantity),
       variety_id: formData.variety_id || null,
@@ -484,24 +497,18 @@ function PlantingTab() {
       status: formData.status,
       notes: formData.notes || null,
     };
-    if (editRecord) {
-      const { error } = await supabase.from('plantings').update(payload).eq('id', editRecord.id);
-      if (error) { alert('❌ ' + error.message); return; }
-    } else {
-      const { error } = await supabase.from('plantings').insert([payload]);
-      if (error) { alert('❌ ' + error.message); return; }
-    }
+    const { error } = await supabase.from('plantings').insert([payload]);
+    if (error) { alert('❌ ' + error.message); return; }
     setFormData(emptyForm);
-    setEditRecord(null);
+    setNewLocationName('');
     setShowForm(false);
-    setCustomLocation(false);
     fetchAll();
   };
 
-  const handleEdit = (p) => {
-    const area = getArea(p.location);
-    setFormData({
-      area,
+  // インライン編集開始
+  const startInlineEdit = (p) => {
+    setInlineEditId(p.id);
+    setInlineEditData({
       location: p.location,
       planted_date: p.planted_date,
       planted_quantity: p.planted_quantity,
@@ -510,11 +517,35 @@ function PlantingTab() {
       status: p.status,
       notes: p.notes || '',
     });
-    setEditRecord(p);
-    setShowForm(true);
+  };
+
+  // インライン編集保存
+  const saveInlineEdit = async () => {
+    const payload = {
+      location: inlineEditData.location,
+      planted_date: inlineEditData.planted_date,
+      planted_quantity: parseInt(inlineEditData.planted_quantity),
+      variety_id: inlineEditData.variety_id || null,
+      variety_generation: inlineEditData.variety_generation || null,
+      status: inlineEditData.status,
+      notes: inlineEditData.notes || null,
+    };
+    const { error } = await supabase.from('plantings').update(payload).eq('id', inlineEditId);
+    if (error) { alert('❌ ' + error.message); return; }
+    setInlineEditId(null);
+    fetchAll();
+  };
+
+  // 削除
+  const handleDelete = async (id) => {
+    if (!window.confirm('この記録を削除しますか？')) return;
+    await supabase.from('plantings').delete().eq('id', id);
+    fetchAll();
   };
 
   const getArea = (location) => {
+    const loc = locations.find(l => l.name === location);
+    if (loc) return loc.area;
     for (const [area, locs] of Object.entries(WASABI_AREAS)) {
       if (locs.includes(location)) return area;
     }
@@ -527,33 +558,37 @@ function PlantingTab() {
     return p.variety_generation ? `${v.name}（${p.variety_generation}）` : v.name;
   };
 
+  const getLocationsByArea = (area) => {
+    const fromDB = locations.filter(l => l.area === area).map(l => l.name);
+    const fromStatic = WASABI_AREAS[area] || [];
+    return [...new Set([...fromDB, ...fromStatic])];
+  };
+
   const filtered = filterStatus === 'すべて' ? plantings : plantings.filter(p => p.status === filterStatus);
 
-  // エリアごとにグループ化
   const grouped = {};
   AREA_NAMES.forEach(a => { grouped[a] = []; });
   grouped['その他'] = [];
   filtered.forEach(p => {
     const area = getArea(p.location);
-    if (area && grouped[area]) grouped[area].push(p);
+    if (area && grouped[area] !== undefined) grouped[area].push(p);
     else grouped['その他'].push(p);
   });
 
-  const locationOptions = WASABI_AREAS[formData.area] || [];
+  const locationOptions = getLocationsByArea(formData.area);
 
   return (
     <div style={S.tabContent}>
       <PageHeader title="植え付け記録" subtitle="わさび田ごとのロット管理" icon="🌱" />
 
-      <button onClick={() => { setShowForm(!showForm); setEditRecord(null); setFormData(emptyForm); }} style={S.submitBtn}>
+      <button onClick={() => { setShowForm(!showForm); setFormData(emptyForm); setNewLocationName(''); }} style={S.submitBtn}>
         <Plus size={18} /> 新しい植え付けを記録
       </button>
 
       {showForm && (
-        <FormCard title={editRecord ? '植え付け記録を編集' : '新しい植え付けを記録'}>
+        <FormCard title="新しい植え付けを記録">
           <form onSubmit={handleSubmit}>
             <div style={S.formGrid}>
-              {/* わさび田（大区分） */}
               <div>
                 <label style={S.fieldLabel}>わさび田</label>
                 <select style={S.select} value={formData.area}
@@ -563,32 +598,21 @@ function PlantingTab() {
                 </select>
               </div>
 
-              {/* 詳細場所 */}
               <div>
                 <label style={S.fieldLabel}>詳細場所</label>
-                <div style={{ marginBottom: 4 }}>
-                  <button type="button" onClick={() => setCustomLocation(!customLocation)} style={S.toggleLink}>
-                    {customLocation ? '▾ 選択肢から選ぶ' : '✏️ 直接入力'}
-                  </button>
-                </div>
-                {customLocation ? (
-                  <input style={S.input} value={formData.location}
-                    onChange={e => setFormData({ ...formData, location: e.target.value })} placeholder="場所を入力" required />
-                ) : (
-                  <select style={S.select} value={formData.location}
-                    onChange={e => setFormData({ ...formData, location: e.target.value })} required>
-                    <option value="">場所を選択</option>
-                    {locationOptions.map(o => <option key={o} value={o}>{o}</option>)}
-                    <option value="__new__">＋ 新しい場所を入力</option>
-                  </select>
-                )}
+                <select style={S.select} value={formData.location}
+                  onChange={e => setFormData({ ...formData, location: e.target.value })} required>
+                  <option value="">場所を選択</option>
+                  {locationOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                  <option value="__new__">＋ 新しい場所を追加</option>
+                </select>
                 {formData.location === '__new__' && (
-                  <input style={{ ...S.input, marginTop: 6 }} value={formData.location === '__new__' ? '' : formData.location}
-                    onChange={e => setFormData({ ...formData, location: e.target.value })} placeholder="場所名を入力" autoFocus />
+                  <input style={{ ...S.input, marginTop: 6 }} value={newLocationName}
+                    onChange={e => setNewLocationName(e.target.value)}
+                    placeholder="新しい場所名を入力（マスターにも追加されます）" autoFocus required />
                 )}
               </div>
 
-              {/* 品種（メイン） */}
               <div>
                 <label style={S.fieldLabel}>品種</label>
                 <select style={S.select} value={formData.variety_id}
@@ -598,7 +622,6 @@ function PlantingTab() {
                 </select>
               </div>
 
-              {/* 世代（サブ）*/}
               {formData.variety_id && (
                 <div>
                   <label style={S.fieldLabel}>世代・系統（任意）</label>
@@ -636,9 +659,9 @@ function PlantingTab() {
             </div>
             <div style={{ display: 'flex', gap: 8, margin: '0 24px 20px' }}>
               <button type="submit" style={{ ...S.submitBtn, margin: 0, flex: 1 }}>
-                <Plus size={18} /> {editRecord ? '更新する' : '記録を追加'}
+                <Plus size={18} /> 記録を追加
               </button>
-              <button type="button" onClick={() => { setShowForm(false); setEditRecord(null); setFormData(emptyForm); }} style={S.cancelBtn}>
+              <button type="button" onClick={() => { setShowForm(false); setFormData(emptyForm); }} style={S.cancelBtn}>
                 キャンセル
               </button>
             </div>
@@ -646,7 +669,6 @@ function PlantingTab() {
         </FormCard>
       )}
 
-      {/* ビュー切り替え＆フィルター */}
       <div style={S.listHeader}>
         <h3 style={S.sectionTitle}>記録一覧 <span style={S.countBadge}>{filtered.length}件</span></h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -667,7 +689,10 @@ function PlantingTab() {
 
       {loading ? <LoadingSpinner /> : filtered.length === 0 ? <EmptyState text="記録がまだありません" /> : (
         view === 'date' ? (
-          <PlantingTable plantings={filtered} getVarietyLabel={getVarietyLabel} onEdit={handleEdit} />
+          <PlantingTable plantings={filtered} varieties={varieties} getVarietyLabel={getVarietyLabel}
+            inlineEditId={inlineEditId} inlineEditData={inlineEditData} setInlineEditData={setInlineEditData}
+            onStartEdit={startInlineEdit} onSaveEdit={saveInlineEdit} onCancelEdit={() => setInlineEditId(null)}
+            onDelete={handleDelete} locations={locations} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[...AREA_NAMES, 'その他'].map(area => {
@@ -676,7 +701,7 @@ function PlantingTab() {
               const isOpen = openAreas[area] !== false;
               const totalQty = rows.reduce((a, p) => a + (p.planted_quantity || 0), 0);
               return (
-                <div key={area} style={{ ...S.tableWrap }}>
+                <div key={area} style={S.tableWrap}>
                   <div style={S.groupHeader}
                     onClick={() => setOpenAreas(prev => ({ ...prev, [area]: !isOpen }))}>
                     <div style={S.groupLeft}>
@@ -688,7 +713,12 @@ function PlantingTab() {
                       <span style={{ color: '#52b788', fontSize: 12 }}>合計 {totalQty.toLocaleString()}本</span>
                     </div>
                   </div>
-                  {isOpen && <PlantingTable plantings={rows} getVarietyLabel={getVarietyLabel} onEdit={handleEdit} nested />}
+                  {isOpen && (
+                    <PlantingTable plantings={rows} varieties={varieties} getVarietyLabel={getVarietyLabel}
+                      inlineEditId={inlineEditId} inlineEditData={inlineEditData} setInlineEditData={setInlineEditData}
+                      onStartEdit={startInlineEdit} onSaveEdit={saveInlineEdit} onCancelEdit={() => setInlineEditId(null)}
+                      onDelete={handleDelete} locations={locations} nested />
+                  )}
                 </div>
               );
             })}
@@ -699,50 +729,101 @@ function PlantingTab() {
   );
 }
 
-function PlantingTable({ plantings, getVarietyLabel, onEdit, nested = false }) {
+function PlantingTable({ plantings, varieties, getVarietyLabel, inlineEditId, inlineEditData, setInlineEditData, onStartEdit, onSaveEdit, onCancelEdit, onDelete, locations, nested = false }) {
+  const thBg = nested ? '#f8fffe' : undefined;
+  const thColor = nested ? '#74c69d' : '#d8f3dc';
+  const theadBg = nested ? { background: '#f8fffe' } : S.thead;
+
   return (
     <div style={nested ? {} : S.tableWrap}>
-      <table style={S.table}>
-        {!nested && (
-          <thead>
-            <tr style={S.thead}>
-              <th style={S.th}>場所</th>
-              <th style={S.th}>品種</th>
-              <th style={{ ...S.th, textAlign: 'center' }}>植え付け日</th>
-              <th style={{ ...S.th, textAlign: 'right' }}>本数</th>
-              <th style={{ ...S.th, textAlign: 'center' }}>ステータス</th>
-              <th style={{ ...S.th, textAlign: 'center' }}>操作</th>
-            </tr>
-          </thead>
-        )}
-        {nested && (
-          <thead>
-            <tr style={{ background: '#f8fffe' }}>
-              <th style={{ ...S.th, color: '#74c69d', background: '#f8fffe' }}>場所</th>
-              <th style={{ ...S.th, color: '#74c69d', background: '#f8fffe' }}>品種</th>
-              <th style={{ ...S.th, color: '#74c69d', background: '#f8fffe', textAlign: 'center' }}>植え付け日</th>
-              <th style={{ ...S.th, color: '#74c69d', background: '#f8fffe', textAlign: 'right' }}>本数</th>
-              <th style={{ ...S.th, color: '#74c69d', background: '#f8fffe', textAlign: 'center' }}>ステータス</th>
-              <th style={{ ...S.th, color: '#74c69d', background: '#f8fffe', textAlign: 'center' }}>操作</th>
-            </tr>
-          </thead>
-        )}
+      <table style={{ ...S.table, tableLayout: 'fixed' }}>
+        <colgroup>
+          <col style={{ width: '18%' }} />
+          <col style={{ width: '16%' }} />
+          <col style={{ width: '13%' }} />
+          <col style={{ width: '10%' }} />
+          <col style={{ width: '13%' }} />
+          <col style={{ width: '18%' }} />
+          <col style={{ width: '12%' }} />
+        </colgroup>
+        <thead>
+          <tr style={theadBg}>
+            {['場所', '品種', '植え付け日', '本数', 'ステータス', '備考', '操作'].map((h, i) => (
+              <th key={h} style={{ ...S.th, color: thColor, background: thBg, textAlign: i === 3 ? 'right' : 'left' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
           {plantings.map((p, i) => {
+            const isEditing = inlineEditId === p.id;
             const sc = statusColors[p.status] || statusColors['生育中'];
+
+            if (isEditing) {
+              return (
+                <tr key={p.id} style={{ backgroundColor: '#f0faf4' }}>
+                  <td style={S.td}>
+                    <input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }}
+                      value={inlineEditData.location}
+                      onChange={e => setInlineEditData({ ...inlineEditData, location: e.target.value })} />
+                  </td>
+                  <td style={S.td}>
+                    <select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }}
+                      value={inlineEditData.variety_id}
+                      onChange={e => setInlineEditData({ ...inlineEditData, variety_id: e.target.value })}>
+                      <option value="">—</option>
+                      {varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                  </td>
+                  <td style={S.td}>
+                    <input type="date" style={{ ...S.input, fontSize: 12, padding: '5px 8px' }}
+                      value={inlineEditData.planted_date}
+                      onChange={e => setInlineEditData({ ...inlineEditData, planted_date: e.target.value })} />
+                  </td>
+                  <td style={{ ...S.td, textAlign: 'right' }}>
+                    <input type="number" style={{ ...S.input, fontSize: 12, padding: '5px 8px', textAlign: 'right' }}
+                      value={inlineEditData.planted_quantity}
+                      onChange={e => setInlineEditData({ ...inlineEditData, planted_quantity: e.target.value })} />
+                  </td>
+                  <td style={S.td}>
+                    <select style={{ ...S.select, fontSize: 12, padding: '5px 8px' }}
+                      value={inlineEditData.status}
+                      onChange={e => setInlineEditData({ ...inlineEditData, status: e.target.value })}>
+                      {['生育中', '収穫可能', '収穫済', '廃棄'].map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </td>
+                  <td style={S.td}>
+                    <input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }}
+                      value={inlineEditData.notes}
+                      onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })}
+                      placeholder="備考" />
+                  </td>
+                  <td style={{ ...S.td, textAlign: 'center' }}>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                      <button onClick={onSaveEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700 }}>保存</button>
+                      <button onClick={onCancelEdit} style={S.cancelBtn}>✕</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            }
+
             return (
               <tr key={p.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
                 <td style={S.td}><span style={{ fontWeight: 600, color: '#1b4332', fontSize: 13 }}>{p.location}</span></td>
                 <td style={S.td}><span style={S.varietyBadge}>{getVarietyLabel(p)}</span></td>
-                <td style={{ ...S.td, textAlign: 'center', color: '#40916c' }}>{p.planted_date}</td>
+                <td style={{ ...S.td, color: '#40916c', fontSize: 12 }}>{p.planted_date}</td>
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#2d6a4f' }}>{p.planted_quantity?.toLocaleString()}本</td>
-                <td style={{ ...S.td, textAlign: 'center' }}>
+                <td style={S.td}>
                   <span style={{ ...S.statusBadge, backgroundColor: sc.bg, color: sc.text }}>
                     <span style={{ ...S.statusDot, backgroundColor: sc.dot }} />{p.status}
                   </span>
                 </td>
+                <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{p.notes || '—'}</td>
                 <td style={{ ...S.td, textAlign: 'center' }}>
-                  <button onClick={() => onEdit(p)} style={S.editBtn}>編集</button>
+                  <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                    <button onClick={() => onStartEdit(p)} style={S.editBtn}>編集</button>
+                    <button onClick={() => onDelete(p.id)} style={S.deleteBtn}>削除</button>
+                  </div>
                 </td>
               </tr>
             );
@@ -1148,9 +1229,9 @@ function MasterTab() {
 
   return (
     <div style={S.tabContent}>
-      <PageHeader title="マスター管理" subtitle="出荷先・品種などの基本情報" icon="⚙️" />
+      <PageHeader title="マスター管理" subtitle="出荷先・品種・場所などの基本情報" icon="⚙️" />
       <div style={S.masterTabs}>
-        {[['destinations', '🏪 出荷先'], ['varieties', '🌿 品種']].map(([id, label]) => (
+        {[['destinations', '🏪 出荷先'], ['varieties', '🌿 品種'], ['locations', '📍 場所']].map(([id, label]) => (
           <button key={id} onClick={() => setActiveMaster(id)}
             style={{ ...S.masterTab, ...(activeMaster === id ? S.masterTabActive : {}) }}>
             {label}
@@ -1159,6 +1240,7 @@ function MasterTab() {
       </div>
       {activeMaster === 'destinations' && <DestinationsMaster />}
       {activeMaster === 'varieties' && <VarietiesMaster />}
+      {activeMaster === 'locations' && <LocationsMaster />}
     </div>
   );
 }
@@ -1330,6 +1412,119 @@ function VarietiesMaster() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LocationsMaster() {
+  const [locations, setLocations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [formData, setFormData] = useState({ area: '', name: '', notes: '' });
+  const [editId, setEditId] = useState(null);
+
+  useEffect(() => { fetchLocations(); }, []);
+
+  const fetchLocations = async () => {
+    const { data } = await supabase.from('locations').select('*').order('area').order('name');
+    setLocations(data || []);
+    setLoading(false);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (editId) {
+      await supabase.from('locations').update(formData).eq('id', editId);
+      setEditId(null);
+    } else {
+      const { error } = await supabase.from('locations').insert([formData]);
+      if (error) { alert('❌ ' + error.message); return; }
+    }
+    setFormData({ area: '', name: '', notes: '' });
+    fetchLocations();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('削除しますか？')) return;
+    await supabase.from('locations').delete().eq('id', id);
+    fetchLocations();
+  };
+
+  // エリアごとにグループ化
+  const grouped = {};
+  locations.forEach(l => {
+    if (!grouped[l.area]) grouped[l.area] = [];
+    grouped[l.area].push(l);
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <FormCard title={editId ? '場所を編集' : '場所を登録'}>
+        <form onSubmit={handleSubmit}>
+          <div style={S.formGrid}>
+            <div>
+              <label style={S.fieldLabel}>わさび田（エリア）</label>
+              <select style={S.select} value={formData.area} onChange={e => setFormData({ ...formData, area: e.target.value })} required>
+                <option value="">エリアを選択</option>
+                {AREA_NAMES.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.fieldLabel}>詳細場所名</label>
+              <input style={S.input} value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="例: 越沢08-01" required />
+            </div>
+            <div style={S.fieldFull}>
+              <label style={S.fieldLabel}>備考</label>
+              <input style={S.input} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} placeholder="メモなど（任意）" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, margin: '0 24px 20px' }}>
+            <button type="submit" style={{ ...S.submitBtn, margin: 0, flex: 1 }}><Plus size={18} /> {editId ? '更新' : '登録'}</button>
+            {editId && <button type="button" onClick={() => { setEditId(null); setFormData({ area: '', name: '', notes: '' }); }} style={S.cancelBtn}>キャンセル</button>}
+          </div>
+        </form>
+      </FormCard>
+
+      <div>
+        <div style={{ ...S.listHeader, marginBottom: 12 }}>
+          <h3 style={S.sectionTitle}>登録済み場所 <span style={S.countBadge}>{locations.length}件</span></h3>
+          <span style={{ fontSize: 12, color: '#74c69d' }}>植え付け記録のドロップダウンに反映されます</span>
+        </div>
+        {loading ? <LoadingSpinner /> : locations.length === 0 ? <EmptyState text="場所が登録されていません" /> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {Object.entries(grouped).map(([area, locs]) => (
+              <div key={area} style={S.tableWrap}>
+                <div style={{ ...S.groupHeader, cursor: 'default' }}>
+                  <div style={S.groupLeft}>
+                    <span style={S.groupTitle}>{area}</span>
+                    <span style={S.groupCount}>{locs.length}件</span>
+                  </div>
+                </div>
+                <table style={S.table}>
+                  <thead><tr style={S.thead}>
+                    <th style={S.th}>場所名</th>
+                    <th style={S.th}>備考</th>
+                    <th style={{ ...S.th, textAlign: 'center' }}>操作</th>
+                  </tr></thead>
+                  <tbody>
+                    {locs.map((l, i) => (
+                      <tr key={l.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
+                        <td style={S.td}><span style={{ fontWeight: 600, color: '#1b4332' }}>{l.name}</span></td>
+                        <td style={{ ...S.td, color: '#74c69d', fontSize: 12 }}>{l.notes || '—'}</td>
+                        <td style={{ ...S.td, textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                            <button onClick={() => { setEditId(l.id); setFormData({ area: l.area, name: l.name, notes: l.notes || '' }); }} style={S.editBtn}>編集</button>
+                            <button onClick={() => handleDelete(l.id)} style={S.deleteBtn}>削除</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         )}
       </div>
