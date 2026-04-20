@@ -939,6 +939,7 @@ function ShipmentTab() {
   const [showForm, setShowForm] = useState(false);
   const [inlineEditId, setInlineEditId] = useState(null);
   const [inlineEditData, setInlineEditData] = useState({});
+  const [yearFilter, setYearFilter] = useState('すべて');
 
   const emptyForm = { planting_id: '', destination_id: '', shipment_date: '', quantity: '', unit_price: '', notes: '' };
   const [formData, setFormData] = useState(emptyForm);
@@ -998,12 +999,10 @@ function ShipmentTab() {
     fetchData();
   };
 
-  const totalRevenue = shipments.reduce((a, s) => a + parseFloat(s.total_amount || 0), 0);
   const totalAmount = formData.quantity && formData.unit_price
     ? (parseFloat(formData.quantity) * parseFloat(formData.unit_price)).toLocaleString() : null;
 
   // 年フィルター
-  const [yearFilter, setYearFilter] = useState('すべて');
   const years = ['すべて', ...Array.from(new Set(shipments.map(s => s.shipment_date?.slice(0, 4)).filter(Boolean))).sort().reverse()];
   const filteredShipments = yearFilter === 'すべて' ? shipments : shipments.filter(s => s.shipment_date?.startsWith(yearFilter));
   const filteredRevenue = filteredShipments.reduce((a, s) => a + parseFloat(s.total_amount || 0), 0);
