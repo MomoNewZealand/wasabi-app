@@ -1002,9 +1002,15 @@ function ShipmentTab() {
   const totalAmount = formData.quantity && formData.unit_price
     ? (parseFloat(formData.quantity) * parseFloat(formData.unit_price)).toLocaleString() : null;
 
+  // 年フィルター
+  const [yearFilter, setYearFilter] = useState('すべて');
+  const years = ['すべて', ...Array.from(new Set(shipments.map(s => s.shipment_date?.slice(0, 4)).filter(Boolean))).sort().reverse()];
+  const filteredShipments = yearFilter === 'すべて' ? shipments : shipments.filter(s => s.shipment_date?.startsWith(yearFilter));
+  const filteredRevenue = filteredShipments.reduce((a, s) => a + parseFloat(s.total_amount || 0), 0);
+
   // 出荷先ごとにグループ化
   const grouped = {};
-  shipments.forEach(s => {
+  filteredShipments.forEach(s => {
     const name = s.destinations?.name || '不明';
     if (!grouped[name]) grouped[name] = [];
     grouped[name].push(s);
@@ -1081,11 +1087,11 @@ function ShipmentTab() {
       )}
 
       <div style={S.listHeader}>
-        <h3 style={S.sectionTitle}>出荷記録一覧 <span style={S.countBadge}>{shipments.length}件</span></h3>
+        <h3 style={S.sectionTitle}>出荷記録一覧 <span style={S.countBadge}>{filteredShipments.length}件</span></h3>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={S.revenueSummary}>総売上: <strong style={{ color: '#2d6a4f' }}>¥{Math.round(totalRevenue).toLocaleString()}</strong></span>
+          <span style={S.revenueSummary}>総売上: <strong style={{ color: '#2d6a4f' }}>¥{Math.round(filteredRevenue).toLocaleString()}</strong></span>
           <button onClick={() => {
-            const rows = shipments.map(s => ({
+            const rows = filteredShipments.map(s => ({
               出荷日: s.shipment_date,
               出荷先: s.destinations?.name || '',
               植え付けロット: s.plantings?.location || '',
@@ -1094,7 +1100,7 @@ function ShipmentTab() {
               合計金額_円: s.total_amount ? Math.round(s.total_amount) : '',
               備考: s.notes || '',
             }));
-            exportCSV(rows, `出荷記録_${new Date().toISOString().slice(0,10)}.csv`);
+            exportCSV(rows, `出荷記録_${yearFilter}_${new Date().toISOString().slice(0,10)}.csv`);
           }} style={S.csvBtn}>⬇ CSV出力</button>
           <div style={S.viewBtns}>
             {[['date', '日付順'], ['dest', '出荷先ごと']].map(([v, l]) => (
@@ -1105,9 +1111,17 @@ function ShipmentTab() {
         </div>
       </div>
 
-      {loading ? <LoadingSpinner /> : shipments.length === 0 ? <EmptyState text="出荷記録がまだありません" /> : (
+      {/* 年フィルター */}
+      <div style={S.filterRow}>
+        {years.map(y => (
+          <button key={y} onClick={() => setYearFilter(y)}
+            style={{ ...S.filterBtn, ...(yearFilter === y ? S.filterBtnActive : {}) }}>{y}</button>
+        ))}
+      </div>
+
+      {loading ? <LoadingSpinner /> : filteredShipments.length === 0 ? <EmptyState text="出荷記録がまだありません" /> : (
         view === 'date' ? (
-          <ShipmentTable shipments={shipments} plantings={plantings} destinations={destinations}
+          <ShipmentTable shipments={filteredShipments} plantings={plantings} destinations={destinations}
             inlineEditId={inlineEditId} inlineEditData={inlineEditData} setInlineEditData={setInlineEditData}
             onStartEdit={startInlineEdit} onSaveEdit={saveInlineEdit} onCancelEdit={() => setInlineEditId(null)}
             onDelete={handleDelete} />
@@ -1220,6 +1234,7 @@ function ShipmentTable({ shipments, plantings, destinations, inlineEditId, inlin
             <th style={{ ...thStyle, textAlign: 'right' }}>出荷量</th>
             <th style={{ ...thStyle, textAlign: 'right' }}>単価</th>
             <th style={{ ...thStyle, textAlign: 'right' }}>金額</th>
+            <th style={thStyle}>備考</th>
             <th style={{ ...thStyle, textAlign: 'center' }}>操作</th>
           </tr>
         </thead>
@@ -1254,6 +1269,7 @@ function ShipmentTable({ shipments, plantings, destinations, inlineEditId, inlin
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{parseFloat(s.quantity).toLocaleString()}g</td>
                 <td style={{ ...S.td, textAlign: 'right', color: '#74c69d' }}>{s.unit_price ? `¥${s.unit_price}/g` : '—'}</td>
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#1b4332' }}>{s.total_amount ? `¥${Math.round(s.total_amount).toLocaleString()}` : '—'}</td>
+                <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{s.notes || '—'}</td>
                 <td style={{ ...S.td, textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
                     <button onClick={() => onStartEdit(s)} style={S.editBtn}>編集</button>
@@ -1315,6 +1331,17 @@ function ProcessingTab() {
   const handleDelete = async (id) => {
     if (!window.confirm('この記録を削除しますか？')) return;
     await supabase.from('processing').delete().eq('id', id);
+    fetchProcessing();
+  };
+
+  const toggleUsed = async (r) => {
+    const newUsed = !r.is_used;
+    await supabase.from('processing').update({ is_used: newUsed, used_for: newUsed ? r.used_for : null }).eq('id', r.id);
+    fetchProcessing();
+  };
+
+  const updateUsedFor = async (id, used_for) => {
+    await supabase.from('processing').update({ used_for }).eq('id', id);
     fetchProcessing();
   };
 
@@ -1437,7 +1464,7 @@ function ProcessingTab() {
                 );
               }
               return (
-                <div key={r.id} style={S.mobileCard}>
+                <div key={r.id} style={{ ...S.mobileCard, opacity: r.is_used ? 0.65 : 1, background: r.is_used ? "#f5f5f5" : "#fff" }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <span style={S.partBadge}>{r.part}</span>
                     <span style={{ fontSize: 12, color: '#40916c' }}>{r.processing_date}</span>
@@ -1448,10 +1475,33 @@ function ProcessingTab() {
                     <div style={S.mobileCardField}><span style={S.mobileCardKey}>歩留まり</span><span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span></div>
                   </div>
                   {r.notes && <div style={{ fontSize: 12, color: '#74c69d', marginBottom: 6 }}>{r.notes}</div>}
+                  {r.is_used && (
+                    <div style={{ fontSize: 12, background: '#d8f3dc', color: '#1b4332', borderRadius: 6, padding: '3px 10px', marginBottom: 6, display: 'inline-block' }}>
+                      ✅ 使用済み{r.used_for ? `（${r.used_for}）` : ''}
+                    </div>
+                  )}
                   <div style={S.mobileCardActions}>
+                    <button onClick={() => toggleUsed(r)} style={{
+                      flex: 1, padding: '8px', fontSize: 12, cursor: 'pointer', borderRadius: 6,
+                      background: r.is_used ? '#d8f3dc' : '#fff',
+                      border: `1px solid ${r.is_used ? '#52b788' : '#b7e4c7'}`,
+                      color: r.is_used ? '#1b4332' : '#74c69d', fontWeight: r.is_used ? 700 : 400,
+                    }}>{r.is_used ? '✅ 使用済' : '未使用'}</button>
                     <button onClick={() => startInlineEdit(r)} style={{ ...S.editBtn, flex: 1, padding: '8px' }}>編集</button>
                     <button onClick={() => handleDelete(r.id)} style={{ ...S.deleteBtn, flex: 1, padding: '8px' }}>削除</button>
                   </div>
+                  {r.is_used && (
+                    <div style={{ marginTop: 6 }}>
+                      <select style={{ ...S.select, fontSize: 12, padding: '5px 10px' }}
+                        value={r.used_for || ''}
+                        onChange={e => updateUsedFor(r.id, e.target.value)}>
+                        <option value="">使用先を選択</option>
+                        <option value="わさび食堂">わさび食堂</option>
+                        <option value="ソーセージ原料">ソーセージ原料</option>
+                        <option value="その他">その他</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1467,6 +1517,7 @@ function ProcessingTab() {
                   <th style={{ ...S.th, textAlign: 'right' }}>加工後 (g)</th>
                   <th style={{ ...S.th, textAlign: 'right' }}>歩留まり</th>
                   <th style={S.th}>備考</th>
+                  <th style={{ ...S.th, textAlign: 'center' }}>使用済み</th>
                   <th style={{ ...S.th, textAlign: 'center' }}>操作</th>
                 </tr>
               </thead>
@@ -1477,6 +1528,7 @@ function ProcessingTab() {
                   const yc = getYieldColor(yr);
                   const editYield = isEditing && inlineEditData.weight_before && inlineEditData.weight_after
                     ? ((parseFloat(inlineEditData.weight_after) / parseFloat(inlineEditData.weight_before)) * 100).toFixed(1) : null;
+                  const rowBg = r.is_used ? '#f5f5f5' : (i % 2 === 0 ? '#fff' : '#f8fffe');
                   if (isEditing) {
                     return (
                       <tr key={r.id} style={{ backgroundColor: '#f0faf4' }}>
@@ -1488,6 +1540,7 @@ function ProcessingTab() {
                           {editYield ? `${editYield}%` : '—'}
                         </td>
                         <td style={S.td}><input style={{ ...S.input, fontSize: 12, padding: '5px 8px' }} value={inlineEditData.notes} onChange={e => setInlineEditData({ ...inlineEditData, notes: e.target.value })} placeholder="備考" /></td>
+                        <td style={S.td}>—</td>
                         <td style={{ ...S.td, textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
                             <button onClick={saveInlineEdit} style={{ ...S.editBtn, background: '#d8f3dc', fontWeight: 700 }}>保存</button>
@@ -1498,7 +1551,7 @@ function ProcessingTab() {
                     );
                   }
                   return (
-                    <tr key={r.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
+                    <tr key={r.id} style={{ backgroundColor: rowBg, opacity: r.is_used ? 0.6 : 1 }}>
                       <td style={{ ...S.td, color: '#40916c' }}>{r.processing_date}</td>
                       <td style={S.td}><span style={S.partBadge}>{r.part}</span></td>
                       <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_before).toLocaleString()}g</td>
@@ -1507,6 +1560,26 @@ function ProcessingTab() {
                         <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span>
                       </td>
                       <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{r.notes || '—'}</td>
+                      <td style={{ ...S.td, textAlign: 'center' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+                          <button onClick={() => toggleUsed(r)} style={{
+                            background: r.is_used ? '#d8f3dc' : '#fff',
+                            border: `1.5px solid ${r.is_used ? '#52b788' : '#b7e4c7'}`,
+                            borderRadius: 20, padding: '3px 10px', fontSize: 12,
+                            color: r.is_used ? '#1b4332' : '#74c69d', cursor: 'pointer', fontWeight: r.is_used ? 700 : 400,
+                          }}>{r.is_used ? '✅ 使用済' : '未使用'}</button>
+                          {r.is_used && (
+                            <select style={{ ...S.select, fontSize: 11, padding: '3px 6px', width: 100 }}
+                              value={r.used_for || ''}
+                              onChange={e => updateUsedFor(r.id, e.target.value)}>
+                              <option value="">使用先</option>
+                              <option value="わさび食堂">わさび食堂</option>
+                              <option value="ソーセージ原料">ソーセージ原料</option>
+                              <option value="その他">その他</option>
+                            </select>
+                          )}
+                        </div>
+                      </td>
                       <td style={{ ...S.td, textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
                           <button onClick={() => startInlineEdit(r)} style={S.editBtn}>編集</button>
