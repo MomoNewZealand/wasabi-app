@@ -39,23 +39,16 @@ function exportCSV(rows, filename) {
 }
 
 // ============================================================
-// 場所マスター（大区分 → 詳細場所）
+// 場所マスター（フォールバック用静的定義）
 // ============================================================
-const WASABI_AREAS = {
-  '越沢': [
-    '越沢05-04', '越沢05-05', '越沢06-01', '越沢06-06',
-    '越沢07-01', '越沢07-04', '越沢10-03', '越沢（詳細不明）',
-    'メイン横のわさび田', 'メイン横のわさび田（新しく直した所）',
-    'メイン横のわさび田（新しく直した所） (1)',
-    'キッチン横', '木が倒れている場所',
-  ],
+const WASABI_AREAS_FALLBACK = {
+  '越沢': ['越沢05-04', '越沢05-05', '越沢06-01', '越沢06-06', '越沢07-01', '越沢07-04', '越沢10-03', '越沢（詳細不明）', 'メイン横のわさび田', 'メイン横のわさび田（新しく直した所）', 'メイン横のわさび田（新しく直した所） (1)', 'キッチン横', '木が倒れている場所'],
   '寸庭': ['1段目', '2段目'],
   '小中沢': [],
   '青梅': [],
   '栃寄': ['1', '2', '3', '4', '5', '6'],
 };
-
-const AREA_NAMES = Object.keys(WASABI_AREAS);
+const AREA_NAMES_FALLBACK = Object.keys(WASABI_AREAS_FALLBACK);
 
 const PROCESSING_PARTS = ['花', '茎・葉', '茎', '葉', '根茎'];
 
@@ -371,18 +364,26 @@ function DashboardTab() {
 
       const partMap = {};
       (processing || []).forEach(p => {
-        if (!partMap[p.part]) partMap[p.part] = [];
-        partMap[p.part].push(parseFloat(p.yield_rate || 0));
+        if (!partMap[p.part]) partMap[p.part] = { rates: [], processed: 0, used: 0 };
+        partMap[p.part].rates.push(parseFloat(p.yield_rate || 0));
+        partMap[p.part].processed += parseFloat(p.weight_after || 0);
+        if (p.is_used) partMap[p.part].used += parseFloat(p.weight_after || 0);
       });
-      const yieldData = Object.entries(partMap).map(([part, arr]) => ({
-        part, 歩留まり: Math.round(arr.reduce((a, b) => a + b, 0) / arr.length)
+      const yieldData = Object.entries(partMap).map(([part, v]) => ({
+        part, 歩留まり: Math.round(v.rates.reduce((a, b) => a + b, 0) / v.rates.length)
+      }));
+      const inventoryData = Object.entries(partMap).map(([part, v]) => ({
+        part,
+        processed: Math.round(v.processed),
+        used: Math.round(v.used),
+        remaining: Math.round(v.processed - v.used),
       }));
 
       const totalQty = (shipments || []).reduce((a, s) => a + parseFloat(s.quantity || 0), 0);
       const avgYield = yieldData.length ? Math.round(yieldData.reduce((a, b) => a + b.歩留まり, 0) / yieldData.length) : 0;
 
       setStats({ totalPlantings: (plantings || []).length, totalShipments: Math.round(totalQty), totalProcessing: (processing || []).length, avgYield });
-      setData({ monthlyData, destData, yieldData });
+      setData({ monthlyData, destData, yieldData, inventoryData });
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -470,6 +471,28 @@ function DashboardTab() {
             ))}
           </div>
         </div>
+        {(data?.inventoryData?.length || 0) > 0 && (
+          <div style={S.chartCard}>
+            <h3 style={S.chartTitle}>📦 部位別在庫状況</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {data.inventoryData.map(({ part, processed, remaining }) => {
+                const pct = processed > 0 ? Math.round((remaining / processed) * 100) : 0;
+                return (
+                  <div key={part}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                      <span style={{ color: '#1b4332', fontWeight: 600 }}>{part}</span>
+                      <span style={{ color: remaining > 0 ? '#2d6a4f' : '#aaa', fontWeight: 700 }}>{remaining.toLocaleString()}g</span>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 3, background: '#e8f5e9', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#2d6a4f,#52b788)', borderRadius: 3 }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <p style={{ fontSize: 11, color: '#95d5b2', margin: '4px 0 0' }}>残量 = 加工後合計 − 使用済み</p>
+            </div>
+          </div>
+        )}
       </div>
       <button onClick={fetchDashboardData} style={S.refreshBtn}>🔄 データを更新</button>
     </div>
@@ -480,8 +503,10 @@ function DashboardTab() {
 // 植え付け記録タブ
 // ============================================================
 function PlantingTab() {
+  const isMobile = useIsMobile();
   const [varieties, setVarieties] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [areas, setAreas] = useState([]); // DBから取得するエリア一覧
   const [plantings, setPlantings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('area');
@@ -498,16 +523,19 @@ function PlantingTab() {
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
-    const [{ data: pd }, { data: vd }, { data: ld }] = await Promise.all([
+    const [{ data: pd }, { data: vd }, { data: ld }, { data: ad }] = await Promise.all([
       supabase.from('plantings').select('*').order('planted_date', { ascending: false }),
       supabase.from('varieties').select('*').order('name'),
       supabase.from('locations').select('*').order('area').order('name'),
+      supabase.from('areas').select('*').order('sort_order').order('name'),
     ]);
     setPlantings(pd || []);
     setVarieties(vd || []);
     setLocations(ld || []);
+    const areaList = (ad && ad.length > 0) ? ad.map(a => a.name) : AREA_NAMES_FALLBACK;
+    setAreas(areaList);
     const init = {};
-    AREA_NAMES.forEach(a => { init[a] = true; });
+    areaList.forEach(a => { init[a] = true; });
     init['その他'] = true;
     setOpenAreas(init);
     setLoading(false);
@@ -581,7 +609,7 @@ function PlantingTab() {
   const getArea = (location) => {
     const loc = locations.find(l => l.name === location);
     if (loc) return loc.area;
-    for (const [area, locs] of Object.entries(WASABI_AREAS)) {
+    for (const [area, locs] of Object.entries(WASABI_AREAS_FALLBACK)) {
       if (locs.includes(location)) return area;
     }
     return '';
@@ -595,14 +623,14 @@ function PlantingTab() {
 
   const getLocationsByArea = (area) => {
     const fromDB = locations.filter(l => l.area === area).map(l => l.name);
-    const fromStatic = WASABI_AREAS[area] || [];
+    const fromStatic = (WASABI_AREAS_FALLBACK[area] || []);
     return [...new Set([...fromDB, ...fromStatic])];
   };
 
   const filtered = filterStatus === 'すべて' ? plantings : plantings.filter(p => p.status === filterStatus);
 
   const grouped = {};
-  AREA_NAMES.forEach(a => { grouped[a] = []; });
+  areas.forEach(a => { grouped[a] = []; });
   grouped['その他'] = [];
   filtered.forEach(p => {
     const area = getArea(p.location);
@@ -629,7 +657,7 @@ function PlantingTab() {
                 <select style={S.select} value={formData.area}
                   onChange={e => setFormData({ ...formData, area: e.target.value, location: '' })} required>
                   <option value="">エリアを選択</option>
-                  {AREA_NAMES.map(a => <option key={a} value={a}>{a}</option>)}
+                  {areas.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
 
@@ -741,7 +769,7 @@ function PlantingTab() {
             onDelete={handleDelete} locations={locations} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {[...AREA_NAMES, 'その他'].map(area => {
+            {[...areas, 'その他'].map(area => {
               const rows = grouped[area] || [];
               if (rows.length === 0) return null;
               const isOpen = openAreas[area] !== false;
@@ -1290,6 +1318,7 @@ function ShipmentTable({ shipments, plantings, destinations, inlineEditId, inlin
 function ProcessingTab() {
   const isMobile = useIsMobile();
   const [records, setRecords] = useState([]);
+  const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [customPart, setCustomPart] = useState(false);
@@ -1299,18 +1328,30 @@ function ProcessingTab() {
   const emptyForm = { processing_date: '', part: '', weight_before: '', weight_after: '', notes: '' };
   const [formData, setFormData] = useState(emptyForm);
 
-  useEffect(() => { fetchProcessing(); }, []);
+  useEffect(() => { fetchAll(); }, []);
+
+  const fetchAll = async () => {
+    const [{ data: pd }, { data: sd }] = await Promise.all([
+      supabase.from('processing').select('*').order('processing_date', { ascending: false }),
+      supabase.from('shipments').select('quantity,destinations(name)'),
+    ]);
+    setRecords(pd || []);
+    setShipments(sd || []);
+    setLoading(false);
+  };
 
   const fetchProcessing = async () => {
     const { data } = await supabase.from('processing').select('*').order('processing_date', { ascending: false });
     setRecords(data || []);
-    setLoading(false);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const yield_rate = ((parseFloat(formData.weight_after) / parseFloat(formData.weight_before)) * 100).toFixed(2);
-    const { error } = await supabase.from('processing').insert([{ ...formData, yield_rate }]);
+    const yield_rate = (formData.weight_before && formData.weight_after)
+      ? ((parseFloat(formData.weight_after) / parseFloat(formData.weight_before)) * 100).toFixed(2)
+      : null;
+    const payload = { ...formData, yield_rate, weight_before: formData.weight_before || null };
+    const { error } = await supabase.from('processing').insert([payload]);
     if (error) { alert('❌ ' + error.message); return; }
     setFormData(emptyForm); setShowForm(false); setCustomPart(false); fetchProcessing();
   };
@@ -1321,8 +1362,11 @@ function ProcessingTab() {
   };
 
   const saveInlineEdit = async () => {
-    const yield_rate = ((parseFloat(inlineEditData.weight_after) / parseFloat(inlineEditData.weight_before)) * 100).toFixed(2);
-    const { error } = await supabase.from('processing').update({ ...inlineEditData, yield_rate }).eq('id', inlineEditId);
+    const yield_rate = (inlineEditData.weight_before && inlineEditData.weight_after)
+      ? ((parseFloat(inlineEditData.weight_after) / parseFloat(inlineEditData.weight_before)) * 100).toFixed(2)
+      : null;
+    const payload = { ...inlineEditData, yield_rate, weight_before: inlineEditData.weight_before || null };
+    const { error } = await supabase.from('processing').update(payload).eq('id', inlineEditId);
     if (error) { alert('❌ ' + error.message); return; }
     setInlineEditId(null); fetchProcessing();
   };
@@ -1349,9 +1393,67 @@ function ProcessingTab() {
 
   const getYieldColor = (rate) => rate >= 60 ? '#2d6a4f' : rate >= 45 ? '#52b788' : '#f59e0b';
 
+  // 部位別在庫計算：加工後合計 - 出荷合計
+  // ※出荷は部位ごとに紐付いていないため、total出荷量を全部位で按分して表示
+  // 実際には is_used フラグで管理
+  const inventoryByPart = (() => {
+    const map = {};
+    records.forEach(r => {
+      if (!map[r.part]) map[r.part] = { processed: 0, used: 0 };
+      map[r.part].processed += parseFloat(r.weight_after || 0);
+      if (r.is_used) map[r.part].used += parseFloat(r.weight_after || 0);
+    });
+    return Object.entries(map).map(([part, v]) => ({
+      part,
+      processed: Math.round(v.processed),
+      used: Math.round(v.used),
+      remaining: Math.round(v.processed - v.used),
+    }));
+  })();
+
   return (
     <div style={S.tabContent}>
       <PageHeader title="加工記録" subtitle="部位別の重量と歩留まり率" icon="🔪" />
+
+      {/* 部位別在庫サマリー */}
+      {!loading && inventoryByPart.length > 0 && (
+        <div>
+          <h3 style={{ ...S.sectionTitle, marginBottom: 12 }}>📦 部位別在庫状況</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+            {inventoryByPart.map(({ part, processed, used, remaining }) => {
+              const pct = processed > 0 ? Math.round((remaining / processed) * 100) : 0;
+              const barColor = remaining > 0 ? '#52b788' : '#e2e3e5';
+              return (
+                <div key={part} style={{ background: '#fff', borderRadius: 12, border: '1px solid #d8f3dc', padding: '14px 16px', boxShadow: '0 1px 4px rgba(45,106,79,0.06)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={S.partBadge}>{part}</span>
+                    <span style={{ fontSize: 11, color: '#74c69d' }}>{pct}%残</span>
+                  </div>
+                  {/* プログレスバー */}
+                  <div style={{ height: 5, borderRadius: 3, background: '#e8f5e9', marginBottom: 10, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 3, transition: 'width 0.3s' }} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: '#74c69d' }}>加工合計</span>
+                      <span style={{ color: '#52b788', fontWeight: 600 }}>{processed.toLocaleString()}g</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: '#74c69d' }}>使用済み</span>
+                      <span style={{ color: '#aaa' }}>{used.toLocaleString()}g</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, borderTop: '1px solid #e8f5e9', paddingTop: 4, marginTop: 2 }}>
+                      <span style={{ color: '#40916c', fontWeight: 700 }}>残量</span>
+                      <span style={{ color: remaining > 0 ? '#1b4332' : '#aaa', fontWeight: 800 }}>{remaining.toLocaleString()}g</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 11, color: '#95d5b2', marginTop: 8 }}>※「使用済み」は各記録の使用済みフラグに基づいています</p>
+        </div>
+      )}
 
       <button onClick={() => { setShowForm(!showForm); setFormData(emptyForm); }} style={S.submitBtn}>
         <Plus size={18} /> 新しい加工を記録
@@ -1383,9 +1485,9 @@ function ProcessingTab() {
                 )}
               </div>
               <div>
-                <label style={S.fieldLabel}>加工前重量 (g)</label>
+                <label style={S.fieldLabel}>加工前重量 (g) <span style={{ color: '#95d5b2', fontWeight: 400 }}>任意</span></label>
                 <input type="number" step="0.1" style={S.input} value={formData.weight_before}
-                  onChange={e => setFormData({ ...formData, weight_before: e.target.value })} placeholder="例: 1500" required />
+                  onChange={e => setFormData({ ...formData, weight_before: e.target.value })} placeholder="例: 1500（不明の場合は空白）" />
               </div>
               <div>
                 <label style={S.fieldLabel}>加工後重量 (g)</label>
@@ -1469,9 +1571,11 @@ function ProcessingTab() {
                     <span style={{ fontSize: 12, color: '#40916c' }}>{r.processing_date}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 12, marginBottom: 6 }}>
-                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>加工前</span><span style={S.mobileCardVal}>{parseFloat(r.weight_before).toLocaleString()}g</span></div>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>加工前</span><span style={S.mobileCardVal}>{r.weight_before ? `${parseFloat(r.weight_before).toLocaleString()}g` : '—'}</span></div>
                     <div style={S.mobileCardField}><span style={S.mobileCardKey}>加工後</span><span style={S.mobileCardVal}>{parseFloat(r.weight_after).toLocaleString()}g</span></div>
-                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>歩留まり</span><span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span></div>
+                    <div style={S.mobileCardField}><span style={S.mobileCardKey}>歩留まり</span>
+                      {r.yield_rate ? <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span> : <span style={{ color: '#b7e4c7' }}>—</span>}
+                    </div>
                   </div>
                   {r.notes && <div style={{ fontSize: 12, color: '#74c69d', marginBottom: 6 }}>{r.notes}</div>}
                   {r.is_used && (
@@ -1553,10 +1657,10 @@ function ProcessingTab() {
                     <tr key={r.id} style={{ backgroundColor: rowBg, opacity: r.is_used ? 0.6 : 1 }}>
                       <td style={{ ...S.td, color: '#40916c' }}>{r.processing_date}</td>
                       <td style={S.td}><span style={S.partBadge}>{r.part}</span></td>
-                      <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_before).toLocaleString()}g</td>
+                      <td style={{ ...S.td, textAlign: 'right' }}>{r.weight_before ? `${parseFloat(r.weight_before).toLocaleString()}g` : <span style={{ color: '#b7e4c7' }}>—</span>}</td>
                       <td style={{ ...S.td, textAlign: 'right' }}>{parseFloat(r.weight_after).toLocaleString()}g</td>
                       <td style={{ ...S.td, textAlign: 'right' }}>
-                        <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span>
+                        {r.yield_rate ? <span style={{ ...S.yieldBadge, color: yc, borderColor: yc }}>{yr.toFixed(1)}%</span> : <span style={{ color: '#b7e4c7' }}>—</span>}
                       </td>
                       <td style={{ ...S.td, fontSize: 12, color: '#74c69d' }}>{r.notes || '—'}</td>
                       <td style={{ ...S.td, textAlign: 'center' }}>
@@ -1598,16 +1702,16 @@ function ProcessingTab() {
 }
 
 // ============================================================
-// マスター管理タブ（出荷先 ＋ 品種）
+// マスター管理タブ（出荷先 ＋ 品種 ＋ 場所 ＋ エリア）
 // ============================================================
 function MasterTab() {
   const [activeMaster, setActiveMaster] = useState('destinations');
 
   return (
     <div style={S.tabContent}>
-      <PageHeader title="マスター管理" subtitle="出荷先・品種・場所などの基本情報" icon="⚙️" />
+      <PageHeader title="マスター管理" subtitle="出荷先・品種・場所・エリアなどの基本情報" icon="⚙️" />
       <div style={S.masterTabs}>
-        {[['destinations', '🏪 出荷先'], ['varieties', '🌿 品種'], ['locations', '📍 場所']].map(([id, label]) => (
+        {[['destinations', '🏪 出荷先'], ['varieties', '🌿 品種'], ['areas', '🗺️ エリア'], ['locations', '📍 場所']].map(([id, label]) => (
           <button key={id} onClick={() => setActiveMaster(id)}
             style={{ ...S.masterTab, ...(activeMaster === id ? S.masterTabActive : {}) }}>
             {label}
@@ -1616,7 +1720,110 @@ function MasterTab() {
       </div>
       {activeMaster === 'destinations' && <DestinationsMaster />}
       {activeMaster === 'varieties' && <VarietiesMaster />}
+      {activeMaster === 'areas' && <AreasMaster />}
       {activeMaster === 'locations' && <LocationsMaster />}
+    </div>
+  );
+}
+
+// ============================================================
+// エリアマスター
+// ============================================================
+function AreasMaster() {
+  const [areas, setAreas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [formData, setFormData] = useState({ name: '', notes: '' });
+  const [editId, setEditId] = useState(null);
+
+  useEffect(() => { fetchAreas(); }, []);
+
+  const fetchAreas = async () => {
+    const { data } = await supabase.from('areas').select('*').order('sort_order').order('name');
+    setAreas(data || []);
+    setLoading(false);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (editId) {
+      await supabase.from('areas').update(formData).eq('id', editId);
+      setEditId(null);
+    } else {
+      const { error } = await supabase.from('areas').insert([formData]);
+      if (error) { alert('❌ ' + error.message); return; }
+    }
+    setFormData({ name: '', notes: '' });
+    fetchAreas();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('このエリアを削除しますか？\n（関連する詳細場所の「エリア」情報は残ります）')) return;
+    await supabase.from('areas').delete().eq('id', id);
+    fetchAreas();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <FormCard title={editId ? 'エリアを編集' : 'エリアを追加'}>
+        <form onSubmit={handleSubmit}>
+          <div style={S.formGrid}>
+            <div>
+              <label style={S.fieldLabel}>エリア名</label>
+              <input style={S.input} value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="例: 新エリア名" required />
+            </div>
+            <div style={S.fieldFull}>
+              <label style={S.fieldLabel}>備考</label>
+              <input style={S.input} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} placeholder="メモなど（任意）" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, margin: '0 24px 20px' }}>
+            <button type="submit" style={{ ...S.submitBtn, margin: 0, flex: 1 }}><Plus size={18} /> {editId ? '更新' : '登録'}</button>
+            {editId && <button type="button" onClick={() => { setEditId(null); setFormData({ name: '', notes: '' }); }} style={S.cancelBtn}>キャンセル</button>}
+          </div>
+        </form>
+      </FormCard>
+
+      <div>
+        <div style={{ ...S.listHeader, marginBottom: 12 }}>
+          <h3 style={S.sectionTitle}>登録済みエリア <span style={S.countBadge}>{areas.length}件</span></h3>
+          <span style={{ fontSize: 12, color: '#74c69d' }}>植え付け記録・場所登録のドロップダウンに反映されます</span>
+        </div>
+        {loading ? <LoadingSpinner /> : areas.length === 0 ? (
+          <div>
+            <EmptyState text="エリアが登録されていません（下のSQLを実行してください）" />
+            <div style={{ marginTop: 12, background: '#f0faf4', border: '1px solid #b7e4c7', borderRadius: 10, padding: 16 }}>
+              <p style={{ fontSize: 12, color: '#40916c', fontWeight: 700, marginBottom: 8 }}>📋 Supabase SQL Editorで実行してください：</p>
+              <pre style={{ fontSize: 11, color: '#2d6a4f', whiteSpace: 'pre-wrap', margin: 0 }}>{`INSERT INTO areas (name) VALUES
+  ('越沢'),('寸庭'),('小中沢'),('青梅'),('栃寄')
+ON CONFLICT (name) DO NOTHING;`}</pre>
+            </div>
+          </div>
+        ) : (
+          <div style={S.tableWrap}>
+            <table style={S.table}>
+              <thead><tr style={S.thead}>
+                <th style={S.th}>エリア名</th>
+                <th style={S.th}>備考</th>
+                <th style={{ ...S.th, textAlign: 'center' }}>操作</th>
+              </tr></thead>
+              <tbody>
+                {areas.map((a, i) => (
+                  <tr key={a.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#f8fffe' }}>
+                    <td style={S.td}><span style={{ fontWeight: 700, color: '#1b4332', fontSize: 14 }}>🗺️ {a.name}</span></td>
+                    <td style={{ ...S.td, color: '#74c69d', fontSize: 12 }}>{a.notes || '—'}</td>
+                    <td style={{ ...S.td, textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                        <button onClick={() => { setEditId(a.id); setFormData({ name: a.name, notes: a.notes || '' }); }} style={S.editBtn}>編集</button>
+                        <button onClick={() => handleDelete(a.id)} style={S.deleteBtn}>削除</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1797,16 +2004,26 @@ function VarietiesMaster() {
 
 function LocationsMaster() {
   const [locations, setLocations] = useState([]);
+  const [areas, setAreas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({ area: '', name: '', notes: '' });
   const [editId, setEditId] = useState(null);
 
-  useEffect(() => { fetchLocations(); }, []);
+  useEffect(() => { fetchAll(); }, []);
+
+  const fetchAll = async () => {
+    const [{ data: ld }, { data: ad }] = await Promise.all([
+      supabase.from('locations').select('*').order('area').order('name'),
+      supabase.from('areas').select('*').order('sort_order').order('name'),
+    ]);
+    setLocations(ld || []);
+    setAreas((ad && ad.length > 0) ? ad.map(a => a.name) : AREA_NAMES_FALLBACK);
+    setLoading(false);
+  };
 
   const fetchLocations = async () => {
     const { data } = await supabase.from('locations').select('*').order('area').order('name');
     setLocations(data || []);
-    setLoading(false);
   };
 
   const handleSubmit = async (e) => {
@@ -1844,7 +2061,7 @@ function LocationsMaster() {
               <label style={S.fieldLabel}>わさび田（エリア）</label>
               <select style={S.select} value={formData.area} onChange={e => setFormData({ ...formData, area: e.target.value })} required>
                 <option value="">エリアを選択</option>
-                {AREA_NAMES.map(a => <option key={a} value={a}>{a}</option>)}
+                {areas.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
             <div>
