@@ -503,7 +503,6 @@ function DashboardTab() {
 // 植え付け記録タブ
 // ============================================================
 function PlantingTab() {
-  const isMobile = useIsMobile();
   const [varieties, setVarieties] = useState([]);
   const [locations, setLocations] = useState([]);
   const [areas, setAreas] = useState([]); // DBから取得するエリア一覧
@@ -1318,7 +1317,6 @@ function ShipmentTable({ shipments, plantings, destinations, inlineEditId, inlin
 function ProcessingTab() {
   const isMobile = useIsMobile();
   const [records, setRecords] = useState([]);
-  const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [customPart, setCustomPart] = useState(false);
@@ -1331,12 +1329,8 @@ function ProcessingTab() {
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
-    const [{ data: pd }, { data: sd }] = await Promise.all([
-      supabase.from('processing').select('*').order('processing_date', { ascending: false }),
-      supabase.from('shipments').select('quantity,destinations(name)'),
-    ]);
+    const { data: pd } = await supabase.from('processing').select('*').order('processing_date', { ascending: false });
     setRecords(pd || []);
-    setShipments(sd || []);
     setLoading(false);
   };
 
