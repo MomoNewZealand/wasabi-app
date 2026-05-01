@@ -46,7 +46,8 @@ const WASABI_AREAS_FALLBACK = {
   '寸庭': ['1段目', '2段目'],
   '小中沢': [],
   '青梅': [],
-  '栃寄': ['1', '2', '3', '4', '5', '6'],
+  '栃寄': ['栃寄1', '栃寄2', '栃寄3', '栃寄4', '栃寄5', '栃寄6'],
+  '水根沢': ['水根沢1', '水根沢2', '水根沢3'],
 };
 const AREA_NAMES_FALLBACK = Object.keys(WASABI_AREAS_FALLBACK);
 
